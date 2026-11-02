@@ -28,7 +28,9 @@ If the PC shows multiple addresses, choose its Wi-Fi/LAN address. Guest Wi-Fi is
 ## Reading
 
 - Read naturally. The matcher tolerates skipped words, fillers, short ad-libs and some recognition errors. Silence does not advance a slide.
-- The end of the **spoken text** starts **5–4–3–2–1**, then the next nonempty slide opens and begins listening automatically.
+- The end of the **spoken text** starts a countdown (**5–4–3–2–1** by default; 1–15 seconds in settings), then the next nonempty slide opens and begins listening automatically.
+- **Retake** restarts the current slide as a new take and ignores speech from before it. **Back** steps to the previous sentence. **From the top** in the Aa settings sheet restarts the slide.
+- With **Hold at end of slide** on (settings), the end of a slide waits for you instead of counting down; tap Next to continue.
 - Pause freezes reading or the countdown. Resume continues. Previous, Next and Restart cancel the countdown.
 - The final slide displays **Finished**. A completed session reopens at the first slide.
 - Drag to scroll manually. Tap a word to resume voice following there. Seeing the bottom of the screen alone never completes a slide.
