@@ -394,7 +394,7 @@ impl Ui {
     }
 }
 /// Applies hold/countdown settings. An idle countdown (not yet ticking) is
-/// reset to the new length so the "Countdown paused" card stays accurate.
+/// reset to the new length; a started countdown keeps its remaining time.
 fn configure_session(session: &mut Session, settings: &Settings) {
     let idle = session.remaining_ms >= session.countdown_ms;
     session.configure(settings);
@@ -1421,7 +1421,7 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                         }
                     }
                 }
-                if session.phase == Phase::Paused && session.remaining_ms < session.countdown_ms {
+                if session.phase == Phase::Paused && session.resume_phase() == Phase::Countdown {
                     div { class: "overlay",
                         span { class: "overlay-label", "Countdown paused" }
                         strong { "{session.remaining_ms.div_ceil(1000)}" }

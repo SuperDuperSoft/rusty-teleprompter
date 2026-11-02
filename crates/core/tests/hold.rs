@@ -20,7 +20,6 @@ fn script() -> Script {
     }
 }
 
-
 fn held() -> Session {
     let mut s = Session::new(script());
     s.configure(&Settings {
@@ -130,8 +129,12 @@ fn settings_clamp_and_old_json() {
 }
 #[test]
 fn listening_phases() {
-    assert!(Phase::Reading.listening() && Phase::Countdown.listening() && Phase::Holding.listening());
-    assert!(!Phase::Paused.listening() && !Phase::Ready.listening() && !Phase::Finished.listening());
+    assert!(
+        Phase::Reading.listening() && Phase::Countdown.listening() && Phase::Holding.listening()
+    );
+    assert!(
+        !Phase::Paused.listening() && !Phase::Ready.listening() && !Phase::Finished.listening()
+    );
 }
 #[test]
 fn revision_changing_held_slide_ending_pauses() {
@@ -154,4 +157,53 @@ fn revision_removing_later_slides_while_holding_pauses() {
     u.slides.remove(1);
     assert!(s.apply_revision(u));
     assert_eq!(s.phase, Phase::Paused);
+}
+#[test]
+fn paused_countdown_reports_resume_phase() {
+    let mut s = Session::new(script());
+    s.start();
+    s.speech("welcome to our bright green studio", true);
+    s.pause();
+    assert_eq!(s.resume_phase(), Phase::Countdown);
+    s.start();
+    s.retake();
+    s.pause();
+    assert_eq!(s.resume_phase(), Phase::Reading);
+}
+#[test]
+fn revision_while_paused_holding_keeps_hold() {
+    let mut s = held();
+    s.speech("welcome to our bright green studio", true);
+    s.pause();
+    let mut u = script();
+    u.revision = 2;
+    u.slides[1].text = "Changed next slide".into();
+    assert!(s.apply_revision(u));
+    assert_eq!(s.phase, Phase::Paused);
+    s.start();
+    assert_eq!(s.phase, Phase::Holding);
+}
+#[test]
+fn revision_while_paused_holding_changing_ending_reads() {
+    let mut s = held();
+    s.speech("welcome to our bright green studio", true);
+    s.pause();
+    let mut u = script();
+    u.revision = 2;
+    u.slides[0].text = "Welcome to our bright green studio and more".into();
+    assert!(s.apply_revision(u));
+    s.start();
+    assert_eq!((s.slide_index, s.phase), (0, Phase::Reading));
+}
+#[test]
+fn revision_while_paused_holding_removing_later_slides_reads() {
+    let mut s = held();
+    s.speech("welcome to our bright green studio", true);
+    s.pause();
+    let mut u = script();
+    u.revision = 2;
+    u.slides.remove(1);
+    assert!(s.apply_revision(u));
+    s.start();
+    assert_eq!(s.phase, Phase::Reading);
 }

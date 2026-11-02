@@ -425,6 +425,10 @@ impl Session {
     pub fn slide(&self) -> Option<&Slide> {
         self.script.slides.get(self.slide_index)
     }
+    /// The phase a paused session returns to on resume.
+    pub fn resume_phase(&self) -> Phase {
+        self.resume
+    }
     fn playable_from(&self, start: usize) -> Option<usize> {
         (start..self.script.slides.len()).find(|i| !words(&self.script.slides[*i].text).is_empty())
     }
@@ -561,16 +565,19 @@ impl Session {
         self.rewind_to(0);
     }
     /// Shared seek rule: moves the tracker, starts a new take and leaves
-    /// Ready/Paused alone while any active phase goes back to Reading.
+    /// Ready/Paused alone while any active phase goes back to Reading. A
+    /// slide with no words keeps its phase (nothing to read).
     pub(crate) fn rewind_to(&mut self, next_word: usize) {
         self.tracker.seek(next_word);
         self.remaining_ms = self.countdown_ms;
         self.resume = Phase::Reading;
         self.take += 1;
-        if matches!(
-            self.phase,
-            Phase::Countdown | Phase::Holding | Phase::Finished
-        ) {
+        if !self.tracker.words.is_empty()
+            && matches!(
+                self.phase,
+                Phase::Countdown | Phase::Holding | Phase::Finished
+            )
+        {
             self.phase = Phase::Reading;
         }
     }
@@ -579,6 +586,7 @@ impl Session {
             return false;
         }
         let was_holding = self.phase == Phase::Holding;
+        let paused_holding = self.phase == Phase::Paused && self.resume == Phase::Holding;
         let old_id = self.slide().map(|s| s.id.clone());
         let anchor: Vec<_> = self
             .tracker
@@ -613,11 +621,16 @@ impl Session {
         self.remaining_ms = self.countdown_ms;
         self.take += 1;
         self.resume = Phase::Reading;
-        if was_holding {
+        if was_holding || paused_holding {
             let at_end = !self.tracker.words.is_empty()
                 && self.tracker.position == Some(self.tracker.words.len() - 1);
-            if found.is_none() || !at_end || self.playable_from(self.slide_index + 1).is_none() {
+            let keep =
+                found.is_some() && at_end && self.playable_from(self.slide_index + 1).is_some();
+            if was_holding && !keep {
                 self.phase = Phase::Paused;
+            }
+            if paused_holding && keep {
+                self.resume = Phase::Holding;
             }
         }
         if self.tracker.words.is_empty() {

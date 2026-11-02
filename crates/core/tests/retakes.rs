@@ -160,3 +160,42 @@ fn back_sentence_bumps_take_and_reads() {
     assert_eq!(s.take, t + 1);
     assert_eq!(s.phase, Phase::Reading);
 }
+fn unplayable() -> Session {
+    Session::new(Script {
+        id: "s".into(),
+        title: "Empty".into(),
+        revision: 1,
+        slides: vec![Slide {
+            id: "a".into(),
+            title: "A".into(),
+            text: "[Only a direction]".into(),
+        }],
+    })
+}
+#[test]
+fn retake_on_wordless_script_stays_finished() {
+    let mut s = unplayable();
+    assert_eq!(s.phase, Phase::Finished);
+    s.retake();
+    assert_eq!(s.phase, Phase::Finished);
+    s.back_sentence();
+    assert_eq!(s.phase, Phase::Finished);
+}
+#[test]
+fn back_sentence_without_punctuation_goes_to_slide_start() {
+    let mut s = Session::new(Script {
+        id: "s".into(),
+        title: "Plain".into(),
+        revision: 1,
+        slides: vec![Slide {
+            id: "a".into(),
+            title: "A".into(),
+            text: "just words with no punctuation at all".into(),
+        }],
+    });
+    s.start();
+    s.seek(4);
+    s.back_sentence();
+    assert_eq!(s.tracker.position, None);
+    assert_eq!(s.phase, Phase::Reading);
+}
