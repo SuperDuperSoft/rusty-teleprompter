@@ -262,6 +262,17 @@ impl Tracker {
         }
         self.far_end = None;
         self.far_votes = 0;
+        // A growing partial confirms the end it showed last time, as long as
+        // the newer words include something distinctive.
+        if let Some(prev) = self.partial_end {
+            if prev < end
+                && end <= prev + 4
+                && self.words[prev + 1..=end].iter().any(|w| !is_common(&w.text))
+                && self.position.is_none_or(|p| prev > p)
+            {
+                self.position = Some(prev);
+            }
+        }
         if self.partial_end == Some(end) {
             self.votes += 1;
         } else {
