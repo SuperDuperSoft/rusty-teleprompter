@@ -2,7 +2,7 @@
 
 ## Automated checks
 
-- **79 shared Rust engine tests** passed (highlight 4, hold 13, jumps 11, playback 36, retakes 15), covering: omitted words, fillers, skipped sentences, unrelated speech, repeated phrases, stable/revised partials, final-result context, numeric words, UTF-8 offsets, directions, navigation, empty slides, exact countdown duration, countdown pause/resume, pending-revision rules, saved-position behavior, faster highlight commit, retake and take counter, Back a sentence, Hold at end of slide and 1–15 s countdown lengths.
+- **85 shared Rust engine tests** passed (highlight 4, hold 17, jumps 11, playback 36, retakes 17), covering: omitted words, fillers, skipped sentences, unrelated speech, repeated phrases, stable/revised partials, final-result context, numeric words, UTF-8 offsets, directions, navigation, empty slides, exact countdown duration, countdown pause/resume, pending-revision rules, saved-position behavior, faster highlight commit, retake and take counter, Back a sentence, Hold at end of slide and 1–15 s countdown lengths.
 - Includes replay of **64 actual offline Vosk recognition events** from a generated English speech fixture. The Rust matcher reaches the correct ending despite omissions and recognition errors.
 - **18 Rust server integration tests** passed: authenticated local editing, denial of remote editor access, optimistic revision checks, concurrent saves, slide ordering, input limits, pairing/rate limiting, token persistence/revocation and real WebSocket library syncing.
 - Rust Clippy passed with warnings treated as errors for the core, companion and tests.
@@ -36,3 +36,4 @@ These items need the physical Galaxy Tab A7 Lite and have not been run:
 - Timeout recovery: the microphone resumes by itself after a recognizer timeout or error.
 - Reset at slide change without losing the first spoken words of the new slide.
 - The microphone stays open through the countdown and through Hold at end of slide.
+- After Retake or Sentence, words spoken just before the tap don't move the highlight (speech decoded right after the recognizer reset can carry the new take).
