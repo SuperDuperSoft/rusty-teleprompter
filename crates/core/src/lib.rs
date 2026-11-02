@@ -613,8 +613,12 @@ impl Session {
         self.remaining_ms = self.countdown_ms;
         self.take += 1;
         self.resume = Phase::Reading;
-        if was_holding && found.is_none() {
-            self.phase = Phase::Paused;
+        if was_holding {
+            let at_end = !self.tracker.words.is_empty()
+                && self.tracker.position == Some(self.tracker.words.len() - 1);
+            if found.is_none() || !at_end || self.playable_from(self.slide_index + 1).is_none() {
+                self.phase = Phase::Paused;
+            }
         }
         if self.tracker.words.is_empty() {
             self.phase = Phase::Finished;

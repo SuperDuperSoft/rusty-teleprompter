@@ -133,3 +133,25 @@ fn listening_phases() {
     assert!(Phase::Reading.listening() && Phase::Countdown.listening() && Phase::Holding.listening());
     assert!(!Phase::Paused.listening() && !Phase::Ready.listening() && !Phase::Finished.listening());
 }
+#[test]
+fn revision_changing_held_slide_ending_pauses() {
+    let mut s = held();
+    s.speech("welcome to our bright green studio", true);
+    let mut u = script();
+    u.revision = 2;
+    u.slides[0].text = "Welcome to our bright green studio and more".into();
+    assert!(s.apply_revision(u));
+    assert_eq!(s.phase, Phase::Paused);
+    s.start();
+    assert_eq!((s.slide_index, s.phase), (0, Phase::Reading));
+}
+#[test]
+fn revision_removing_later_slides_while_holding_pauses() {
+    let mut s = held();
+    s.speech("welcome to our bright green studio", true);
+    let mut u = script();
+    u.revision = 2;
+    u.slides.remove(1);
+    assert!(s.apply_revision(u));
+    assert_eq!(s.phase, Phase::Paused);
+}
