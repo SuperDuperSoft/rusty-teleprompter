@@ -5,7 +5,7 @@ A new, subscription-free teleprompter built with **Rust and Dioxus**. It install
 - Edit an ordered set of script slides on your Windows PC; changes autosave and sync over your private Wi-Fi network.
 - Read one slide at a time on Android. Offline speech recognition and forgiving phrase matching follow your voice.
 - Reach the end of the spoken text and a **countdown** (5 seconds by default, 1–15 in settings) opens the next nonempty slide. Pause freezes the countdown. Finishing the final slide ends the session.
-- **Retake** restarts the slide with a new take; speech from before the retake is ignored. **Back a sentence** steps to the previous sentence.
+- **Retake** restarts the slide with a new take; speech from before the retake is ignored. **Sentence** steps back one sentence.
 - Optional **Hold at end of slide** (off by default) waits for you at the end of each slide instead of counting down.
 - Android listening recovers by itself from recognizer timeouts and errors, and resets on retake and slide change.
 - Mirror horizontally, vertically or both. Adjust text size, margins, line spacing, reading guide and orientation.
