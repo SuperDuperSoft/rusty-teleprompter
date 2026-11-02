@@ -1,0 +1,13 @@
+/target/
+/dist/
+/.signing/
+/android/.gradle/
+/android/**/build/
+/android/local.properties
+/android/app/src/main/assets/model-en-us/
+/android/app/src/main/assets/web/
+/android/app/src/main/assets/notices/
+/web-dist/
+**/__pycache__/
+
+/.superpowers/

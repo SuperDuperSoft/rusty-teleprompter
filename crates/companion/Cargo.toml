@@ -1,0 +1,31 @@
+[package]
+name = "rusty-companion"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rusty-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+tower-http = { version = "0.6", features = ["fs", "limit"] }
+redb = "2.6"
+rand = "0.9"
+sha2 = "0.10"
+subtle = "2.6"
+anyhow = "1"
+webbrowser = "1"
+local-ip-address = "0.6"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tokio-tungstenite = "0.28"
+futures-util = { version = "0.3", features = ["sink"] }
+
