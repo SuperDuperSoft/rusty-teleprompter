@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.AtomicFile
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.webkit.*
@@ -44,7 +45,11 @@ class MainActivity : Activity() {
     private var destroyed = false
     private var wantedAudio = false
     private var permissionPrompt = false
+    private var prompting = false
+    private var volumeKeys = false
+    private var grammar: String? = null
     private var audioGeneration = 0
+    private var building = -1
     private var take: Long? = null
     private var retries = 0
     private var socket: WebSocketClient? = null
@@ -108,6 +113,8 @@ class MainActivity : Activity() {
                     "stop" -> stopAudio()
                     "settings" -> { prefs.edit().putString("settings",payload).apply(); applyOrientation(payload) }
                     "position" -> prefs.edit().putString("position",payload).apply()
+                    "grammar" -> { grammar=payload.ifBlank{null}; if(service!=null||building==audioGeneration){stopAudio(false);startAudio()} }
+                    "remote" -> try { val value=JSONObject(payload); prompting=value.optBoolean("prompting"); volumeKeys=value.optBoolean("volume"); if(prompting)web.requestFocus() } catch(_:Exception){}
                     "pair" -> try { val value=JSONObject(payload); pair(value.optString("address"),value.optString("code")) } catch (_:Exception){emit(JSONObject().put("type","pair_error").put("message","Check the PC address and code."))}
                     "status" -> try { val value=JSONObject(payload).put("type","status"); socket?.takeIf{it.isOpen}?.send(value.toString()) }catch(_:Exception){}
                 }
@@ -119,6 +126,19 @@ class MainActivity : Activity() {
         val value=try{JSONObject(settings)}catch(_:Exception){JSONObject()}
         val wanted=when(value.optString("orientation")){"portrait"->ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT;"landscape"->ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;else->ActivityInfo.SCREEN_ORIENTATION_FULL_USER}
         if(requestedOrientation!=wanted)requestedOrientation=wanted
+    }
+    /** Raw key forwarding while prompting; Rust's Remote decides what a key means. */
+    override fun dispatchKeyEvent(event:KeyEvent):Boolean{
+        val key=when(event.keyCode){
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,KeyEvent.KEYCODE_HEADSETHOOK->"MediaPlayPause";KeyEvent.KEYCODE_MEDIA_PLAY->"MediaPlay";KeyEvent.KEYCODE_MEDIA_PAUSE->"MediaPause"
+            KeyEvent.KEYCODE_MEDIA_NEXT->"MediaTrackNext";KeyEvent.KEYCODE_MEDIA_PREVIOUS->"MediaTrackPrevious";KeyEvent.KEYCODE_PAGE_UP->"PageUp";KeyEvent.KEYCODE_PAGE_DOWN->"PageDown"
+            KeyEvent.KEYCODE_DPAD_UP->"ArrowUp";KeyEvent.KEYCODE_DPAD_DOWN->"ArrowDown";KeyEvent.KEYCODE_DPAD_LEFT->"ArrowLeft";KeyEvent.KEYCODE_DPAD_RIGHT->"ArrowRight"
+            KeyEvent.KEYCODE_SPACE->" ";KeyEvent.KEYCODE_ENTER,KeyEvent.KEYCODE_DPAD_CENTER,KeyEvent.KEYCODE_NUMPAD_ENTER->"Enter";KeyEvent.KEYCODE_B->"b";KeyEvent.KEYCODE_PERIOD->"."
+            KeyEvent.KEYCODE_VOLUME_UP->if(volumeKeys)"AudioVolumeUp"else null;KeyEvent.KEYCODE_VOLUME_DOWN->if(volumeKeys)"AudioVolumeDown"else null
+            else->null
+        }
+        if(!prompting||key==null||event.isCtrlPressed||event.isAltPressed||event.isMetaPressed||(event.action!=KeyEvent.ACTION_DOWN&&event.action!=KeyEvent.ACTION_UP))return super.dispatchKeyEvent(event)
+        emit(JSONObject().put("type","key").put("key",key).put("down",event.action==KeyEvent.ACTION_DOWN).put("repeat",event.repeatCount>0));return true
     }
     private fun jsonPref(name:String):Any = try { JSONObject(prefs.getString(name,"{}") ?: "{}") } catch(_:Exception){JSONObject()}
     private fun emit(event:JSONObject) { main.post { if(!destroyed&&::web.isInitialized) web.evaluateJavascript("window.__rustyEvents=window.__rustyEvents||[];window.__rustyEvents.push(JSON.parse(${JSONObject.quote(event.toString())}));",null) } }
@@ -154,22 +174,44 @@ class MainActivity : Activity() {
         try{client.connect()}catch(_:Exception){connection("Could not connect to PC");main.postDelayed({if(generation==epoch&&!destroyed)connect()},3000)}
     }
     private fun loadModel(){audioWorker.execute{try{
-        val folder=File(filesDir,"vosk-model-en-us-0.15");val marker=File(folder,".complete");if(!marker.exists()){copyAssets("model-en-us",folder);marker.writeText("1")}
+        val folder=modelFolder();val marker=File(folder,".complete");if(!marker.exists()){copyAssets("model-en-us",folder);marker.writeText("1")}
         val loaded=Model(folder.absolutePath);main.post{if(destroyed)loaded.close()else{model=loaded;voiceReady=true;voiceStatus="Offline voice model ready";emit(JSONObject().put("type","voice").put("ready",true).put("message",voiceStatus))}}
     }catch(error:Throwable){main.post{voiceStatus="Offline voice model could not load. Close other apps and reopen RustyPrompter.";emit(JSONObject().put("type","voice").put("ready",false).put("message",voiceStatus))}}}}
     private fun copyAssets(path:String,target:File){val names=assets.list(path).orEmpty();if(names.isEmpty())assets.open(path).use{source->target.outputStream().use{source.copyTo(it)}}else{target.mkdirs();for(name in names)copyAssets("$path/$name",File(target,name))}}
+    private fun modelFolder()=File(filesDir,"vosk-model-en-us-0.15")
     private fun startAudio(){
         if(!foreground||!voiceReady||!wantedAudio||service!=null)return
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){permissionPrompt=true;requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),101);return}
-        stopAudio(false);val generation=++audioGeneration
-        try{recognizer=Recognizer(model,16000f);service=SpeechService(recognizer,16000f);service!!.startListening(object:RecognitionListener{
+        stopAudio(false);val generation=++audioGeneration;building=generation;val loaded=model;val words=grammar
+        // A 3000-word grammar compiles slowly, so the recognizer is built off the main thread.
+        audioWorker.execute{
+            val built=try{buildRecognizer(loaded,words)}catch(e:Exception){main.post{audioFailed(generation,e.message?:"Could not open microphone")};return@execute}
+            main.post{
+                if(generation!=audioGeneration||!wantedAudio||destroyed){built.close();return@post}
+                recognizer=built;listen(generation,built)
+            }
+        }
+    }
+    /** Script vocabulary when the model has runtime graphs; otherwise the full vocabulary and a grammar_error. Runs on audioWorker. */
+    private fun buildRecognizer(loaded:Model?,words:String?):Recognizer{
+        if(words!=null){
+            val graph=File(modelFolder(),"graph")
+            if(File(graph,"Gr.fst").exists()&&File(graph,"HCLr.fst").exists())try{return Recognizer(loaded,16000f,words)}catch(_:Exception){}
+            main.post{if(grammar==words)grammar=null}
+            emit(JSONObject().put("type","grammar_error").put("message","Script vocabulary is not supported by this voice model. Using full vocabulary."))
+        }
+        return Recognizer(loaded,16000f)
+    }
+    private fun audioFailed(generation:Int,message:String){if(generation!=audioGeneration)return;if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message",message))}
+    private fun listen(generation:Int,built:Recognizer){
+        try{service=SpeechService(built,16000f);service!!.startListening(object:RecognitionListener{
             private fun result(value:String?,final:Boolean){if(generation!=audioGeneration||!wantedAudio)return;try{val json=JSONObject(value?:"{}");val text=json.optString(if(final)"text"else"partial");if(text.isNotBlank()){retries=0;val event=JSONObject().put("type","speech").put("text",text).put("final",final);take?.let{event.put("take",it)};emit(event)}}catch(_:Exception){}}
             override fun onPartialResult(hypothesis:String?)=result(hypothesis,false)
             override fun onResult(hypothesis:String?)=result(hypothesis,true)
             override fun onFinalResult(hypothesis:String?)=result(hypothesis,true)
-            override fun onError(exception:Exception?){if(generation==audioGeneration){if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message",exception?.message?:"Microphone unavailable"))}}
-            override fun onTimeout(){if(generation==audioGeneration){if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message","Listening stopped. Tap Resume to restart."))}}
-        })}catch(e:Exception){if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message",e.message?:"Could not open microphone"))}
+            override fun onError(exception:Exception?)=audioFailed(generation,exception?.message?:"Microphone unavailable")
+            override fun onTimeout()=audioFailed(generation,"Listening stopped. Tap Resume to restart.")
+        })}catch(e:Exception){audioFailed(generation,e.message?:"Could not open microphone")}
     }
     /** Restart a failed recognizer with backoff (500/1000/2000 ms). False once the retries are used up. */
     private fun retryAudio():Boolean{
@@ -180,5 +222,5 @@ class MainActivity : Activity() {
     override fun onResume(){super.onResume();foreground=true;if(wantedAudio)startAudio()}
     override fun onPause(){foreground=false;stopAudio(!permissionPrompt);emit(JSONObject().put("type","pause"));super.onPause()}
     override fun onRequestPermissionsResult(code:Int,permissions:Array<out String>,results:IntArray){super.onRequestPermissionsResult(code,permissions,results);if(code==101){permissionPrompt=false;if(results.firstOrNull()==PackageManager.PERMISSION_GRANTED){wantedAudio=true;emit(JSONObject().put("type","permission_granted"));startAudio()}else{stopAudio();emit(JSONObject().put("type","audio_error").put("message","Allow microphone access in Android settings to follow your voice. Manual scrolling and Next still work."))}}}
-    override fun onDestroy(){destroyed=true;epoch++;socket?.close();stopAudio();model?.close();model=null;worker.shutdown();audioWorker.shutdown();if(::web.isInitialized){web.removeJavascriptInterface("RustyNative");web.destroy()};super.onDestroy()}
+    override fun onDestroy(){destroyed=true;epoch++;socket?.close();stopAudio();val loaded=model;model=null;worker.shutdown();audioWorker.execute{loaded?.close()};audioWorker.shutdown();if(::web.isInitialized){web.removeJavascriptInterface("RustyNative");web.destroy()};super.onDestroy()}
 }

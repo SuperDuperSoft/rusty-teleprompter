@@ -16,7 +16,20 @@ export function initialize() {
     else window.__rustyEvents.push({type:"import",name:file.name,text:await file.text()});
     e.target.value = "";
   });
+  const key = down => e => {
+    const r = window.__rustyRemote, t = e.target;
+    if (!r?.prompting || typeof e.key !== "string" || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+    if (t instanceof Element && (t.matches("input,textarea,select") || t.isContentEditable || t.closest("[role=dialog],.sheet,.sheet-backdrop"))) return;
+    const name = e.key === "Spacebar" || e.key === "Space" ? " " : e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (!r.keys.has(name)) return;
+    e.preventDefault();
+    window.__rustyEvents.push({type:"key",key:e.key,down,repeat:e.repeat});
+  };
+  document.addEventListener("keydown", key(true), true);
+  document.addEventListener("keyup", key(false), true);
+  window.addEventListener("blur", () => window.__rustyEvents.push({type:"key_reset"}));
 }
+export function set_remote(prompting, keys_json) { window.__rustyRemote = {prompting, keys: new Set(JSON.parse(keys_json))}; }
 export function drain_events() { const values = window.__rustyEvents || []; window.__rustyEvents = []; return JSON.stringify(values); }
 export function native_call(command, payload) { if (window.RustyNative) window.RustyNative.command(command, payload); }
 export function now() { return performance.now(); }

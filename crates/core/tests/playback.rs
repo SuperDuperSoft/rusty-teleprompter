@@ -12,6 +12,15 @@ fn real_offline_recognition_stream() {
     }
     assert_eq!(tracker.position, Some(tracker.words.len() - 1));
 }
+#[test]
+fn replay_never_resyncs_back() {
+    let mut tracker = Tracker::new("Welcome to our studio. Today we are making a very useful local teleprompter. I can pause and take a breath. [Look at camera] Now the bright green camera light means we are recording. That is the end of this slide.");
+    for line in include_str!("fixtures/offline-voice.tsv").lines() {
+        let (kind, text) = line.split_once('\t').unwrap();
+        tracker.accept(text, kind == "final");
+        assert_ne!(tracker.last_outcome, Outcome::Back, "{line}");
+    }
+}
 fn script() -> Script {
     Script {
         id: "s".into(),

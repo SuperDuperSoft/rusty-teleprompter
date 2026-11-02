@@ -137,3 +137,13 @@ html:has(.phone-home),html:has(.prompter),body:has(.phone-home),body:has(.prompt
 .prompter .prompt-controls .play{font-size:18px;padding:0 18px;max-width:180px}
 .prompter .prompt-controls .control{font-size:inherit;padding:4px;max-width:96px}
 .prompter .prompt-controls button:disabled{opacity:.3}
+/* Pre-roll sync flash: above every modal and sheet */
+.sync-flash{position:fixed;inset:0;z-index:1000;background:#fff;pointer-events:none}
+/* Heard dot and lost-place hint */
+.prompter-title .dot{transition:transform .12s}
+.dot.heard{background:var(--accent);transform:scale(1.4);transition:transform .12s}
+.lost-hint{position:absolute;left:50%;bottom:80px;transform:translateX(-50%);z-index:4;width:min(560px,calc(100% - 32px));background:var(--surface2);color:var(--text);border:1px solid var(--accent);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;font-size:16px;line-height:1.4;box-shadow:0 6px 20px #0008}
+.lost-hint>div{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.lost-hint .ghost-button{min-height:44px;padding:8px 14px;font-size:15px}
+.prompter .spoken-word.hint-word{text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:4px}
+.remote-toast{position:absolute;left:50%;top:24px;transform:translateX(-50%);z-index:6;background:var(--surface2);color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:12px 28px;font-size:clamp(28px,6vw,44px);font-weight:650;white-space:nowrap;max-width:calc(100% - 32px);overflow:hidden;text-overflow:ellipsis;pointer-events:none;box-shadow:0 6px 20px #0008}

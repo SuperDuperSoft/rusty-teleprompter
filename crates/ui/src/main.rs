@@ -1,5 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 mod app;
+#[cfg(any(target_arch = "wasm32", test))]
+mod remote_toast;
 #[cfg(target_arch = "wasm32")]
 fn main() {
     dioxus::launch(app::App);
