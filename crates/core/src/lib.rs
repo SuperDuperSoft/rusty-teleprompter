@@ -365,12 +365,17 @@ pub enum Phase {
     Ready,
     Reading,
     Countdown,
+    Holding,
     Paused,
     Finished,
 }
 impl Phase {
     pub fn running(self) -> bool {
         matches!(self, Self::Reading | Self::Countdown)
+    }
+    /// True while the mic should be live (reading, counting down or holding).
+    pub fn listening(self) -> bool {
+        matches!(self, Self::Reading | Self::Countdown | Self::Holding)
     }
 }
 
@@ -382,6 +387,8 @@ pub struct Session {
     pub tracker: Tracker,
     pub remaining_ms: u64,
     pub take: u64,
+    pub countdown_ms: u64,
+    pub hold_at_end: bool,
     resume: Phase,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -410,6 +417,8 @@ impl Session {
             tracker,
             remaining_ms: 5000,
             take: 0,
+            countdown_ms: 5000,
+            hold_at_end: false,
             resume: Phase::Reading,
         }
     }
@@ -419,8 +428,16 @@ impl Session {
     fn playable_from(&self, start: usize) -> Option<usize> {
         (start..self.script.slides.len()).find(|i| !words(&self.script.slides[*i].text).is_empty())
     }
+    pub fn configure(&mut self, settings: &Settings) {
+        self.countdown_ms = (settings.countdown_secs * 1000.0).round() as u64;
+        self.hold_at_end = settings.hold_at_end;
+    }
     pub fn start(&mut self) {
         if self.phase == Phase::Finished {
+            return;
+        }
+        if self.phase == Phase::Holding {
+            self.next();
             return;
         }
         self.phase = if self.phase == Phase::Paused {
@@ -431,7 +448,7 @@ impl Session {
         self.tracker.reset_utterance();
     }
     pub fn pause(&mut self) {
-        if self.phase.running() || self.phase == Phase::Ready {
+        if self.phase.listening() || self.phase == Phase::Ready {
             self.resume = if self.phase == Phase::Ready {
                 Phase::Reading
             } else {
@@ -451,8 +468,12 @@ impl Session {
             if self.playable_from(self.slide_index + 1).is_none() {
                 self.phase = Phase::Finished;
             } else {
-                self.phase = Phase::Countdown;
-                self.remaining_ms = 5000;
+                self.remaining_ms = self.countdown_ms;
+                self.phase = if self.hold_at_end {
+                    Phase::Holding
+                } else {
+                    Phase::Countdown
+                };
             }
         }
     }
@@ -476,7 +497,7 @@ impl Session {
             self.move_to(i);
         } else {
             self.phase = Phase::Finished;
-            self.remaining_ms = 5000;
+            self.remaining_ms = self.countdown_ms;
         }
     }
     pub fn previous(&mut self) {
@@ -502,7 +523,7 @@ impl Session {
         let paused = matches!(self.phase, Phase::Ready | Phase::Paused);
         self.slide_index = i;
         self.tracker = Tracker::new(&self.script.slides[i].text);
-        self.remaining_ms = 5000;
+        self.remaining_ms = self.countdown_ms;
         self.take += 1;
         self.resume = Phase::Reading;
         self.phase = if paused {
@@ -543,10 +564,13 @@ impl Session {
     /// Ready/Paused alone while any active phase goes back to Reading.
     pub(crate) fn rewind_to(&mut self, next_word: usize) {
         self.tracker.seek(next_word);
-        self.remaining_ms = 5000;
+        self.remaining_ms = self.countdown_ms;
         self.resume = Phase::Reading;
         self.take += 1;
-        if matches!(self.phase, Phase::Countdown | Phase::Finished) {
+        if matches!(
+            self.phase,
+            Phase::Countdown | Phase::Holding | Phase::Finished
+        ) {
             self.phase = Phase::Reading;
         }
     }
@@ -554,6 +578,7 @@ impl Session {
         if self.phase.running() || update.id != self.script.id {
             return false;
         }
+        let was_holding = self.phase == Phase::Holding;
         let old_id = self.slide().map(|s| s.id.clone());
         let anchor: Vec<_> = self
             .tracker
@@ -585,9 +610,12 @@ impl Session {
                 self.tracker.seek(matches[0] + anchor.len());
             }
         }
-        self.remaining_ms = 5000;
+        self.remaining_ms = self.countdown_ms;
         self.take += 1;
         self.resume = Phase::Reading;
+        if was_holding && found.is_none() {
+            self.phase = Phase::Paused;
+        }
         if self.tracker.words.is_empty() {
             self.phase = Phase::Finished;
         }
@@ -634,6 +662,8 @@ pub struct Settings {
     pub mirror_x: bool,
     pub mirror_y: bool,
     pub orientation: String,
+    pub hold_at_end: bool,
+    pub countdown_secs: f64,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -646,6 +676,8 @@ impl Default for Settings {
             mirror_x: false,
             mirror_y: false,
             orientation: "auto".into(),
+            hold_at_end: false,
+            countdown_secs: 5.0,
         }
     }
 }
@@ -655,6 +687,7 @@ impl Settings {
         self.margins = self.margins.clamp(2.0, 20.0);
         self.line_spacing = self.line_spacing.clamp(1.0, 2.4);
         self.guide = self.guide.clamp(15.0, 60.0);
+        self.countdown_secs = self.countdown_secs.clamp(1.0, 15.0);
         if !["auto", "portrait", "landscape"].contains(&self.orientation.as_str()) {
             self.orientation = "auto".into();
         }
