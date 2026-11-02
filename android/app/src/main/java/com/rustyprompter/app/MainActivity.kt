@@ -169,7 +169,7 @@ class MainActivity : Activity() {
             override fun onFinalResult(hypothesis:String?)=result(hypothesis,true)
             override fun onError(exception:Exception?){if(generation==audioGeneration){if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message",exception?.message?:"Microphone unavailable"))}}
             override fun onTimeout(){if(generation==audioGeneration){if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message","Listening stopped. Tap Resume to restart."))}}
-        })}catch(e:Exception){stopAudio();emit(JSONObject().put("type","audio_error").put("message",e.message?:"Could not open microphone"))}
+        })}catch(e:Exception){if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message",e.message?:"Could not open microphone"))}
     }
     /** Restart a failed recognizer with backoff (500/1000/2000 ms). False once the retries are used up. */
     private fun retryAudio():Boolean{
