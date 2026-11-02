@@ -4,7 +4,7 @@ import hashlib,json,zipfile
 from task import ROOT
 
 dist=ROOT/'dist';dist.mkdir(exist_ok=True)
-excluded={'target','dist','.signing','.gradle','build','web-dist','__pycache__','model-en-us','web','notices'}
+excluded={'.git','.superpowers','target','dist','.signing','.gradle','build','web-dist','__pycache__','model-en-us','web','notices'}
 with zipfile.ZipFile(dist/'RustyPrompter-Source.zip','w',zipfile.ZIP_DEFLATED,strict_timestamps=False)as archive:
     for path in ROOT.rglob('*'):
         rel=path.relative_to(ROOT)

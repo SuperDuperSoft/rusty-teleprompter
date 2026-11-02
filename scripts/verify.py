@@ -21,7 +21,7 @@ with zipfile.ZipFile(dist/'RustyPrompter-Windows.zip')as archive:
     assert not any('qa-tablet'in name for name in archive.namelist())
 with zipfile.ZipFile(dist/'RustyPrompter-Source.zip')as archive:
     assert archive.testzip()is None
-    assert not any('/.signing/'in name or '/target/'in name or name.endswith('local.properties')for name in archive.namelist())
+    assert not any('/.signing/'in name or '/.git/'in name or '/.superpowers/'in name or '/target/'in name or name.endswith('local.properties')for name in archive.namelist())
 smoke=json.loads((shared/'rustyprompter/packaged-smoke.json').read_text());assert smoke['ok']
 report={'apkSignature':'verified','offlineDioxusBundle':'verified','bundledModelAndNativeLibraries':'verified','nativeWindowsSmoke':'passed','privateSigningMaterialExcludedFromSource':True,'unshippedFixtureAdapterExcluded':True}
 (dist/'VERIFICATION.json').write_text(json.dumps(report,indent=2))
