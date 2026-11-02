@@ -45,6 +45,8 @@ class MainActivity : Activity() {
     private var wantedAudio = false
     private var permissionPrompt = false
     private var audioGeneration = 0
+    private var take: Long? = null
+    private var retries = 0
     private var socket: WebSocketClient? = null
     @Volatile private var epoch = 0
     private var retry = 1000L
@@ -101,7 +103,8 @@ class MainActivity : Activity() {
                 if (destroyed) return@post
                 when(name) {
                     "ui_ready" -> loading.visibility=android.view.View.GONE
-                    "start" -> { wantedAudio=true; startAudio() }
+                    "start" -> { payload.trim().toLongOrNull()?.let{take=it}; retries=0; wantedAudio=true; startAudio() }
+                    "reset" -> { payload.trim().toLongOrNull()?.let{take=it}; service?.reset() }
                     "stop" -> stopAudio()
                     "settings" -> { prefs.edit().putString("settings",payload).apply(); applyOrientation(payload) }
                     "position" -> prefs.edit().putString("position",payload).apply()
@@ -160,13 +163,18 @@ class MainActivity : Activity() {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){permissionPrompt=true;requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),101);return}
         stopAudio(false);val generation=++audioGeneration
         try{recognizer=Recognizer(model,16000f);service=SpeechService(recognizer,16000f);service!!.startListening(object:RecognitionListener{
-            private fun result(value:String?,final:Boolean){if(generation!=audioGeneration||!wantedAudio)return;try{val json=JSONObject(value?:"{}");val text=json.optString(if(final)"text"else"partial");if(text.isNotBlank())emit(JSONObject().put("type","speech").put("text",text).put("final",final))}catch(_:Exception){}}
+            private fun result(value:String?,final:Boolean){if(generation!=audioGeneration||!wantedAudio)return;try{val json=JSONObject(value?:"{}");val text=json.optString(if(final)"text"else"partial");if(text.isNotBlank()){retries=0;val event=JSONObject().put("type","speech").put("text",text).put("final",final);take?.let{event.put("take",it)};emit(event)}}catch(_:Exception){}}
             override fun onPartialResult(hypothesis:String?)=result(hypothesis,false)
             override fun onResult(hypothesis:String?)=result(hypothesis,true)
             override fun onFinalResult(hypothesis:String?)=result(hypothesis,true)
-            override fun onError(exception:Exception?){if(generation==audioGeneration){stopAudio();emit(JSONObject().put("type","audio_error").put("message",exception?.message?:"Microphone unavailable"))}}
-            override fun onTimeout(){if(generation==audioGeneration){stopAudio();emit(JSONObject().put("type","audio_error").put("message","Listening stopped. Tap Resume to restart."))}}
+            override fun onError(exception:Exception?){if(generation==audioGeneration){if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message",exception?.message?:"Microphone unavailable"))}}
+            override fun onTimeout(){if(generation==audioGeneration){if(retryAudio())return;stopAudio();emit(JSONObject().put("type","audio_error").put("message","Listening stopped. Tap Resume to restart."))}}
         })}catch(e:Exception){stopAudio();emit(JSONObject().put("type","audio_error").put("message",e.message?:"Could not open microphone"))}
+    }
+    /** Restart a failed recognizer with backoff (500/1000/2000 ms). False once the retries are used up. */
+    private fun retryAudio():Boolean{
+        if(!wantedAudio||retries>=3)return false
+        stopAudio(false);main.postDelayed({if(wantedAudio&&!destroyed)startAudio()},longArrayOf(500,1000,2000)[retries++]);return true
     }
     private fun stopAudio(clearWanted:Boolean=true){audioGeneration++;if(clearWanted)wantedAudio=false;service?.stop();service?.shutdown();service=null;recognizer?.close();recognizer=null}
     override fun onResume(){super.onResume();foreground=true;if(wantedAudio)startAudio()}
