@@ -235,6 +235,7 @@ impl Ui {
     fn open(&mut self, id: String) {
         if let Some(s) = self.library.scripts.iter().find(|s| s.id == id).cloned() {
             let mut session = Session::new(s);
+            configure_session(&mut session, &self.settings);
             if let Ok(saved) = serde_json::from_str(&local_get("rusty:position")) {
                 session.restore(&saved);
             }
@@ -286,6 +287,8 @@ impl Ui {
                 "next" => s.next(),
                 "previous" => s.previous(),
                 "restart" => s.restart(),
+                "retake" => s.retake(),
+                "back_sentence" => s.back_sentence(),
                 _ => {}
             }
         }
@@ -297,7 +300,10 @@ impl Ui {
         let text = serde_json::to_string(&self.settings).unwrap();
         local_set("rusty:settings", &text);
         native_call("settings", &text);
-        if let Some(session)=&self.session { follow_word(session.tracker.position.unwrap_or(0),self.settings.guide,true); }
+        if let Some(session) = &mut self.session {
+            configure_session(session, &self.settings);
+            follow_word(session.tracker.position.unwrap_or(0), self.settings.guide, true);
+        }
     }
     fn export(&self, plain: bool) {
         if let Some(s) = self.script() {
@@ -387,6 +393,23 @@ impl Ui {
         }
     }
 }
+/// Applies hold/countdown settings. An idle countdown (not yet ticking) is
+/// reset to the new length so the "Countdown paused" card stays accurate.
+fn configure_session(session: &mut Session, settings: &Settings) {
+    let idle = session.remaining_ms >= session.countdown_ms;
+    session.configure(settings);
+    if idle {
+        session.remaining_ms = session.countdown_ms;
+    }
+}
+/// Describes what reaching the end of a slide does, e.g. "starts a 5-second countdown".
+fn end_of_slide_text(settings: &Settings) -> String {
+    if settings.hold_at_end {
+        "holds until you tap Next".into()
+    } else {
+        format!("starts a {:.0}-second countdown", settings.countdown_secs)
+    }
+}
 /// Keep only characters that can appear in an IPv4 address with optional port.
 /// A pasted "http://192.168.1.5:8766/" becomes "192.168.1.5" (default port dropped).
 fn ip_only(raw: &str) -> String {
@@ -451,7 +474,7 @@ async fn pump(mut state: Signal<Ui>) {
     let mut last_poll = -3000.0;
     let mut last_persist = -2000.0;
     let mut audio = false;
-    let mut current_slide = String::new();
+    let mut current_take: Option<(String, u64, u64)> = None;
     let mut shown_word = None;
     let mut was_following = true;
     loop {
@@ -473,7 +496,7 @@ async fn pump(mut state: Signal<Ui>) {
                     let text = event["text"].as_str().unwrap_or("");
                     let is_final = event["final"].as_bool().unwrap_or(false);
                     if let Some(session) = &mut ui.session {
-                        session.speech(text, is_final);
+                        session.speech_for_take(text, is_final, event["take"].as_u64());
                     }
                     ui.apply_pending();
                 }
@@ -519,32 +542,36 @@ async fn pump(mut state: Signal<Ui>) {
                 _ => {}
             }
         }
-        if state.peek().session.as_ref().is_some_and(|s| s.phase == Phase::Countdown || (s.phase.running() && elapsed > 1500)) {
+        if state.peek().session.as_ref().is_some_and(|s| s.phase == Phase::Countdown) {
             let mut ui = state.write();
-            if elapsed > 1500 {
-                ui.action("pause");
-            } else if let Some(session) = &mut ui.session {
-                session.tick(elapsed);
+            if let Some(session) = &mut ui.session {
+                // A long gap (backgrounded tab, stalled timer) counts as one short step.
+                session.tick(elapsed.min(250));
             }
             ui.apply_pending();
         }
         let desired = state.peek().native && state.peek().voice_ready
-            && state.peek().session.as_ref().is_some_and(|s| s.phase == Phase::Reading);
-        let slide_key = state
+            && state.peek().session.as_ref().is_some_and(|s| s.phase.listening());
+        let take_key = state
             .peek()
             .session
             .as_ref()
-            .map(|s| format!("{}:{}:{}", s.script.id, s.script.revision, s.slide_index))
-            .unwrap_or_default();
-        if desired != audio || slide_key != current_slide {
-            if audio {
+            .map(|s| (s.script.id.clone(), s.script.revision, s.take));
+        let take = take_key.as_ref().map_or(0, |k| k.2).to_string();
+        if desired != audio {
+            if desired {
+                native_call("start", &take);
+            } else {
                 native_call("stop", "");
             }
             audio = desired;
-            current_slide = slide_key;
-            if desired {
-                native_call("start", "");
+            current_take = take_key;
+            shown_word = None;
+        } else if take_key != current_take {
+            if audio {
+                native_call("reset", &take);
             }
+            current_take = take_key;
             shown_word = None;
         }
         let follow = state.peek().follow;
@@ -699,6 +726,13 @@ fn Brand() -> Element {
 #[component]
 fn Studio(mut state: Signal<Ui>) -> Element {
     let ui = state.read().clone();
+    let (next_badge, next_copy) = if ui.settings.hold_at_end {
+        ("‖".to_string(), "Reach the end. The prompter holds until you tap Next.".to_string())
+    } else {
+        let secs = format!("{:.0}", ui.settings.countdown_secs);
+        let copy = format!("Reach the end. A {secs}-second countdown handles the rest.");
+        (secs, copy)
+    };
     let selected = ui.script().cloned();
     let script = selected
         .clone()
@@ -1063,10 +1097,10 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                                 }
                             }
                             div { class: "next-card",
-                                span { "5" }
+                                span { "{next_badge}" }
                                 div {
                                     strong { "Read. Breathe. Next slide." }
-                                    p { "Reach the end. A five-second countdown handles the rest." }
+                                    p { "{next_copy}" }
                                 }
                             }
                             p { class: "preview-note",
@@ -1232,6 +1266,8 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
         "Listening"
     } else if session.phase == Phase::Countdown {
         "Next slide soon"
+    } else if session.phase == Phase::Holding {
+        "End of slide"
     } else if session.phase == Phase::Finished {
         "Take complete"
     } else if session.phase == Phase::Paused {
@@ -1259,7 +1295,7 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                 div { class: "prompter-title",
                     strong { "{session.script.title}" }
                     small {
-                        span { class: if session.phase == Phase::Reading { "dot ok pulse" } else { "dot" } }
+                        span { class: if session.phase.listening() { "dot ok pulse" } else { "dot" } }
                         "{status} · Slide {number}/{total}"
                     }
                 }
@@ -1369,7 +1405,23 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                         }
                     }
                 }
-                if session.phase == Phase::Paused && session.remaining_ms < 5000 {
+                if session.phase == Phase::Holding {
+                    div { class: "overlay",
+                        span { class: "overlay-label", "Slide {number} of {total}" }
+                        strong { class: "overlay-word", "End of slide" }
+                        button {
+                            class: "primary",
+                            onclick: move |_| state.write().action("toggle"),
+                            "Next slide"
+                        }
+                        button {
+                            class: "ghost-button",
+                            onclick: move |_| state.write().action("retake"),
+                            "Retake"
+                        }
+                    }
+                }
+                if session.phase == Phase::Paused && session.remaining_ms < session.countdown_ms {
                     div { class: "overlay",
                         span { class: "overlay-label", "Countdown paused" }
                         strong { "{session.remaining_ms.div_ceil(1000)}" }
@@ -1380,10 +1432,17 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
             footer { class: "prompt-controls",
                 button {
                     class: "control",
-                    aria_label: "Restart slide set",
-                    onclick: move |_| state.write().action("restart"),
+                    aria_label: "Retake this slide",
+                    onclick: move |_| state.write().action("retake"),
                     span { class: "control-icon", "↺" }
-                    span { class: "control-label", "Restart" }
+                    span { class: "control-label", "Retake" }
+                }
+                button {
+                    class: "control",
+                    aria_label: "Back one sentence",
+                    onclick: move |_| state.write().action("back_sentence"),
+                    span { class: "control-icon", "↶" }
+                    span { class: "control-label", "Sentence" }
                 }
                 button {
                     class: "control",
@@ -1400,6 +1459,8 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                         "Pause"
                     } else if session.phase == Phase::Finished {
                         "Again"
+                    } else if session.phase == Phase::Holding {
+                        "Next"
                     } else if session.phase == Phase::Ready {
                         "Start"
                     } else {
@@ -1450,6 +1511,7 @@ fn SettingSlider(
                             "margins" => ui.settings.margins = v,
                             "spacing" => ui.settings.line_spacing = v,
                             "guide" => ui.settings.guide = v,
+                            "countdown_secs" => ui.settings.countdown_secs = v,
                             _ => {}
                         }
                         ui.save_settings();
@@ -1473,6 +1535,7 @@ fn SettingSwitch(mut state: Signal<Ui>, label: String, field: String, on: bool) 
                     "guide" => u.settings.show_guide = !u.settings.show_guide,
                     "mirror_x" => u.settings.mirror_x = !u.settings.mirror_x,
                     "mirror_y" => u.settings.mirror_y = !u.settings.mirror_y,
+                    "hold_at_end" => u.settings.hold_at_end = !u.settings.hold_at_end,
                     _ => {}
                 }
                 u.save_settings();
@@ -1485,6 +1548,7 @@ fn SettingSwitch(mut state: Signal<Ui>, label: String, field: String, on: bool) 
 #[component]
 fn Overlays(mut state: Signal<Ui>) -> Element {
     let ui = state.read().clone();
+    let end_text = end_of_slide_text(&ui.settings);
     rsx! {
         if ui.help {
             div { class: "modal-backdrop",
@@ -1521,7 +1585,7 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                     div { class: "help-note",
                         strong { "A little room to be yourself." }
                         p {
-                            "Pauses and short ad-libs are fine. Reaching the end of the spoken text starts a five-second countdown. If you skip the entire ending, tap Next."
+                            "Pauses and short ad-libs are fine. Reaching the end of the spoken text {end_text}. If you skip the entire ending, tap Next."
                         }
                     }
                     p {
@@ -1712,6 +1776,30 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         SettingSwitch { state, label: "Show reading line", field: "guide", on: ui.settings.show_guide }
                         SettingSwitch { state, label: "Mirror left–right", field: "mirror_x", on: ui.settings.mirror_x }
                         SettingSwitch { state, label: "Flip upside down", field: "mirror_y", on: ui.settings.mirror_y }
+                        SettingSwitch { state, label: "Hold at end of slide", field: "hold_at_end", on: ui.settings.hold_at_end }
+                    }
+                    if !ui.settings.hold_at_end {
+                        SettingSlider {
+                            state,
+                            label: "Countdown",
+                            field: "countdown_secs",
+                            value: ui.settings.countdown_secs,
+                            min: 1.0,
+                            max: 15.0,
+                            step: 1.0,
+                        }
+                    }
+                    if ui.session.is_some() {
+                        button {
+                            class: "ghost-button wide",
+                            aria_label: "Restart slide set from the top",
+                            onclick: move |_| {
+                                let mut u = state.write();
+                                u.action("restart");
+                                u.settings_open = false;
+                            },
+                            "From the top"
+                        }
                     }
                     button {
                         class: "primary wide big",
