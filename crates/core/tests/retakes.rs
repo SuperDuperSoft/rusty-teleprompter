@@ -92,3 +92,71 @@ fn untagged_speech_is_accepted() {
     s.speech_for_take("welcome to our bright green", true, None);
     assert!(s.tracker.position.is_some());
 }
+
+fn starts(text: &str) -> Vec<usize> {
+    sentence_starts(text, &words(text))
+}
+#[test]
+fn abbreviations_verses_and_blank_lines() {
+    // dr0 smith1 spoke2 read3 john4 three5 sixteen6 today7 new8 part9 here10
+    assert_eq!(
+        starts("Dr. Smith spoke. Read John 3:16 today!\n\nnew part here"),
+        vec![0, 3, 8]
+    );
+}
+#[test]
+fn cue_inside_gap_still_breaks() {
+    assert_eq!(starts("Hello there. [pause] Next one"), vec![0, 2]);
+}
+#[test]
+fn lowercase_after_period_is_not_a_start() {
+    assert_eq!(starts("We use e.g. this one"), vec![0]);
+}
+#[test]
+fn no_punctuation_is_one_sentence() {
+    assert_eq!(starts("just words with no punctuation at all"), vec![0]);
+}
+fn sentences() -> Session {
+    let mut s = Session::new(Script {
+        id: "s".into(),
+        title: "Sentences".into(),
+        revision: 1,
+        slides: vec![Slide {
+            id: "a".into(),
+            title: "A".into(),
+            text: "One two three. Four five six. Seven eight nine.".into(),
+        }],
+    });
+    s.start();
+    s
+}
+#[test]
+fn back_goes_to_current_sentence_start() {
+    let mut s = sentences();
+    s.seek(8);
+    s.back_sentence();
+    assert_eq!(s.tracker.position, Some(5));
+}
+#[test]
+fn back_within_first_two_words_goes_further() {
+    let mut s = sentences();
+    s.seek(7);
+    s.back_sentence();
+    assert_eq!(s.tracker.position, Some(2));
+}
+#[test]
+fn back_at_first_sentence_stays_at_zero() {
+    let mut s = sentences();
+    s.seek(1);
+    s.back_sentence();
+    assert_eq!(s.tracker.position, None);
+}
+#[test]
+fn back_sentence_bumps_take_and_reads() {
+    let mut s = sentences();
+    s.seek(8);
+    let t = s.take;
+    s.back_sentence();
+    assert_eq!(s.take, t + 1);
+    assert_eq!(s.phase, Phase::Reading);
+}

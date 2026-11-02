@@ -28,6 +28,36 @@ pub struct Word {
     pub end: usize,
 }
 
+/// Indices of words that begin a sentence: the first word, words after a blank
+/// line, and capitalised/numeric words after `.`, `?` or `!` (not abbreviations).
+pub fn sentence_starts(text: &str, words: &[Word]) -> Vec<usize> {
+    const ABBREVIATIONS: [&str; 11] = [
+        "dr", "mr", "mrs", "ms", "st", "rev", "vs", "etc", "jr", "sr", "no",
+    ];
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let mut starts = vec![0];
+    for i in 1..words.len() {
+        let gap: String = text[words[i - 1].end..words[i].start]
+            .chars()
+            .filter(|c| !matches!(c, ' ' | '\t' | '\r'))
+            .collect();
+        let blank = gap.contains("\n\n");
+        let capital = text[words[i].start..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_uppercase() || c.is_ascii_digit());
+        let ends = gap.contains(['.', '?', '!'])
+            && capital
+            && !ABBREVIATIONS.contains(&words[i - 1].text.as_str());
+        if blank || ends {
+            starts.push(i);
+        }
+    }
+    starts
+}
+
 pub fn words(text: &str) -> Vec<Word> {
     static WORD: OnceLock<Regex> = OnceLock::new();
     static CUE: OnceLock<Regex> = OnceLock::new();
@@ -483,6 +513,27 @@ impl Session {
     }
     pub fn seek(&mut self, next_word: usize) {
         self.rewind_to(next_word);
+    }
+    /// Jumps to the start of the current sentence, or the previous one when
+    /// already within its first two words.
+    pub fn back_sentence(&mut self) {
+        let next = self.tracker.position.map_or(0, |p| p + 1);
+        let starts = self
+            .slide()
+            .map(|s| sentence_starts(&s.text, &self.tracker.words))
+            .unwrap_or_default();
+        let c = starts
+            .iter()
+            .copied()
+            .filter(|&s| s <= next)
+            .max()
+            .unwrap_or(0);
+        let target = if next - c >= 2 {
+            c
+        } else {
+            starts.iter().copied().filter(|&s| s < c).max().unwrap_or(0)
+        };
+        self.rewind_to(target);
     }
     /// Restarts the current slide's reading from the first word.
     pub fn retake(&mut self) {
