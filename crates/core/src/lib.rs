@@ -351,6 +351,7 @@ pub struct Session {
     pub phase: Phase,
     pub tracker: Tracker,
     pub remaining_ms: u64,
+    pub take: u64,
     resume: Phase,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -378,6 +379,7 @@ impl Session {
             },
             tracker,
             remaining_ms: 5000,
+            take: 0,
             resume: Phase::Reading,
         }
     }
@@ -424,6 +426,13 @@ impl Session {
             }
         }
     }
+    /// Applies speech only if it belongs to the current take (or is untagged).
+    pub fn speech_for_take(&mut self, text: &str, is_final: bool, take: Option<u64>) {
+        if take.is_some_and(|t| t != self.take) {
+            return;
+        }
+        self.speech(text, is_final);
+    }
     pub fn tick(&mut self, elapsed: u64) {
         if self.phase == Phase::Countdown {
             self.remaining_ms = self.remaining_ms.saturating_sub(elapsed);
@@ -464,6 +473,7 @@ impl Session {
         self.slide_index = i;
         self.tracker = Tracker::new(&self.script.slides[i].text);
         self.remaining_ms = 5000;
+        self.take += 1;
         self.resume = Phase::Reading;
         self.phase = if paused {
             Phase::Paused
@@ -472,9 +482,19 @@ impl Session {
         };
     }
     pub fn seek(&mut self, next_word: usize) {
+        self.rewind_to(next_word);
+    }
+    /// Restarts the current slide's reading from the first word.
+    pub fn retake(&mut self) {
+        self.rewind_to(0);
+    }
+    /// Shared seek rule: moves the tracker, starts a new take and leaves
+    /// Ready/Paused alone while any active phase goes back to Reading.
+    pub(crate) fn rewind_to(&mut self, next_word: usize) {
         self.tracker.seek(next_word);
         self.remaining_ms = 5000;
         self.resume = Phase::Reading;
+        self.take += 1;
         if matches!(self.phase, Phase::Countdown | Phase::Finished) {
             self.phase = Phase::Reading;
         }
@@ -515,6 +535,7 @@ impl Session {
             }
         }
         self.remaining_ms = 5000;
+        self.take += 1;
         self.resume = Phase::Reading;
         if self.tracker.words.is_empty() {
             self.phase = Phase::Finished;
