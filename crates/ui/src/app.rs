@@ -18,6 +18,14 @@ extern "C" {
     fn request_import();
     fn download_file(name: &str, text: &str);
     fn follow_word(index: usize, guide: f64, force: bool);
+    fn set_remote(prompting: bool, keys_json: &str);
+}
+thread_local! {
+    /// Session time the pump has measured but not yet ticked. Ticks are
+    /// batched so the prompter only re-renders when something it shows
+    /// changes; any change to the session first charges this time to the
+    /// state that was current while it passed (see Ui::flush_clock).
+    static UNTICKED_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 #[derive(Clone)]
 struct Ui {
@@ -52,6 +60,10 @@ struct Ui {
     confirm: Option<String>,
     recovery: Option<Script>,
     preview: bool,
+    /// The sync flash shows while `now()` is before this time.
+    flash_until: f64,
+    /// Remote-key feedback (text, deadline).
+    remote_toast: Option<(String, f64)>,
 }
 impl Ui {
     fn new() -> Self {
@@ -110,6 +122,8 @@ impl Ui {
             confirm: None,
             recovery,
             preview: false,
+            flash_until: 0.0,
+            remote_toast: None,
         }
     }
     fn script(&self) -> Option<&Script> {
@@ -263,11 +277,22 @@ impl Ui {
         self.library = library;
         self.apply_pending();
     }
-    fn action(&mut self, action: &str) {
-        if action == "toggle"
+    fn voice_blocked(&self, action: &str) -> bool {
+        matches!(action, "toggle" | "forward" | "play")
             && self.session.as_ref().is_some_and(|s| !s.phase.running()) && self.native
             && !self.voice_ready
-        {
+    }
+    /// Ticks the session by the batched pump time, so time that passed before
+    /// a change is charged to the state it passed in, not the new one.
+    fn flush_clock(&mut self) {
+        let ms = UNTICKED_MS.with(|c| c.replace(0));
+        if let Some(session) = &mut self.session {
+            session.tick(ms);
+        }
+    }
+    fn action(&mut self, action: &str) {
+        self.flush_clock();
+        if self.voice_blocked(action) {
             self.message = self.voice_status.clone();
             return;
         }
@@ -276,13 +301,20 @@ impl Ui {
                 "toggle" => {
                     if s.phase.running() {
                         s.pause();
+                    } else if s.phase == Phase::Finished {
+                        s.read_again();
                     } else {
-                        if s.phase == Phase::Finished {
-                            s.restart();
-                        }
                         s.start();
                     }
                 }
+                "forward" => s.forward(),
+                "play" => {
+                    if !s.phase.running() {
+                        s.start();
+                    }
+                }
+                "skip_roll" => s.skip_roll(),
+                "dismiss_lost" => s.dismiss_lost(),
                 "pause" => s.pause(),
                 "next" => s.next(),
                 "previous" => s.previous(),
@@ -294,6 +326,35 @@ impl Ui {
         }
         self.apply_pending();
         self.follow = true;
+    }
+    /// Dispatches a remote key action (§9) and shows what it did.
+    fn remote_action(&mut self, action: RemoteAction) {
+        let name = match action {
+            RemoteAction::Forward => "forward",
+            RemoteAction::Toggle => "toggle",
+            RemoteAction::Play => "play",
+            RemoteAction::Pause => "pause",
+            RemoteAction::BackSentence => "back_sentence",
+            RemoteAction::Retake => "retake",
+        };
+        let blocked = self.voice_blocked(name);
+        let Some(before) = self.session.as_ref().map(|s| (s.phase, s.slide_index)) else {
+            return;
+        };
+        self.action(name);
+        let Some(s) = &self.session else { return };
+        if blocked {
+            return;
+        }
+        let after = (s.phase, s.slide_index);
+        if let Some(text) = crate::remote_toast::remote_toast_text(action, before, after, s.take) {
+            self.remote_toast = Some((text, now() + 1500.0));
+        }
+    }
+    /// The prompter is shown and no sheet or modal is open.
+    fn prompting(&self) -> bool {
+        self.tablet && self.session.is_some() && !self.help && !self.pairing
+            && !self.settings_open && self.confirm.is_none() && self.recovery.is_none()
     }
     fn save_settings(&mut self) {
         self.settings.clamp();
@@ -468,6 +529,75 @@ async fn fetch_json(
         Err(value["detail"].as_str().unwrap_or("Could not save this script.").into())
     }
 }
+/// Applies one event drained from `window.__rustyEvents`.
+fn handle_event(ui: &mut Ui, event: &Value) {
+    match event["type"].as_str().unwrap_or("") {
+        "library" => {
+            if let Ok(lib) = serde_json::from_value(event.clone()) {
+                ui.receive_library(lib);
+            }
+        }
+        "speech" => {
+            let text = event["text"].as_str().unwrap_or("");
+            let is_final = event["final"].as_bool().unwrap_or(false);
+            if let Some(session) = &mut ui.session {
+                session.speech_for_take(text, is_final, event["take"].as_u64());
+            }
+            ui.apply_pending();
+        }
+        "voice" => {
+            ui.voice_ready = event["ready"].as_bool().unwrap_or(false);
+            ui.voice_status = event["message"].as_str().unwrap_or("").into();
+        }
+        "connection" => {
+            ui.connection = event["message"].as_str().unwrap_or("").into();
+        }
+        "paired" => {
+            ui.pair_busy = false;
+            ui.pairing = false;
+            ui.message.clear();
+        }
+        "pair_error" => {
+            ui.pair_busy = false;
+            ui.message = event["message"]
+                .as_str()
+                .unwrap_or("Could not connect.")
+                .into();
+        }
+        "permission_granted" => {
+            if let Some(s) = &mut ui.session {
+                s.start();
+            }
+        }
+        "audio_error" => {
+            ui.action("pause");
+            ui.message = event["message"]
+                .as_str()
+                .unwrap_or("Microphone unavailable")
+                .into();
+        }
+        "pause" => ui.action("pause"),
+        "error" | "grammar_error" =>ui.message = event["message"].as_str().unwrap_or("").into(),
+        "import" => {
+            ui.import(
+                event["name"].as_str().unwrap_or("script.txt"),
+                event["text"].as_str().unwrap_or(""),
+            )
+        }
+        _ => {}
+    }
+}
+/// Ticks the session by the batched clock and clears an expired flash.
+fn tick_clock(ui: &mut Ui) {
+    ui.flush_clock();
+    if ui.flash_until > 0.0 && now() >= ui.flash_until {
+        ui.flash_until = 0.0;
+    }
+    if ui.remote_toast.as_ref().is_some_and(|t| now() >= t.1) {
+        ui.remote_toast = None;
+    }
+    ui.apply_pending();
+}
 async fn pump(mut state: Signal<Ui>) {
     native_call("ui_ready", "");
     let mut previous = now();
@@ -477,86 +607,124 @@ async fn pump(mut state: Signal<Ui>) {
     let mut current_take: Option<(String, u64, u64)> = None;
     let mut shown_word = None;
     let mut was_following = true;
+    // (script id, sync_mark) last seen; a change within one script means a
+    // pre-roll just ended.
+    let mut seen_mark: Option<(String, u64)> = None;
+    let mut remote = Remote::new(false);
+    // (prompting, volume_keys) last sent to JS and native.
+    let mut remote_key: Option<(bool, bool)> = None;
+    // Grammar last sent (None inside = full vocabulary), and the
+    // (script, revision) wanted when it was last worked out.
+    let mut grammar_key: Option<Option<(String, u64)>> = None;
+    let mut grammar_seen: Option<Option<(String, u64)>> = None;
     loop {
         gloo_timers::future::TimeoutFuture::new(50).await;
         let time = now();
         let elapsed = (time - previous).max(0.0) as u64;
         previous = time;
+        // A long gap (backgrounded tab, stalled timer) counts as one short step.
+        let clock_ms = UNTICKED_MS.with(|c| {
+            c.set(c.get() + elapsed.min(250));
+            c.get()
+        });
+        remote.volume_keys = state.peek().settings.volume_keys;
         let events: Vec<Value> = serde_json::from_str(&drain_events())
             .unwrap_or_default();
-        for event in events {
-            let mut ui = state.write();
-            match event["type"].as_str().unwrap_or("") {
-                "library" => {
-                    if let Ok(lib) = serde_json::from_value(event.clone()) {
-                        ui.receive_library(lib);
+        // The hold timer is checked after queued key events are applied, so a
+        // key-up that waited in the queue past HOLD_MS is still a short press.
+        let fired = if events.is_empty() { remote.tick(time) } else { None };
+        if events.is_empty() && fired.is_none() {
+            let (write, idle) = {
+                let ui = state.peek();
+                let flash_done = (ui.flash_until > 0.0 && time >= ui.flash_until)
+                    || ui.remote_toast.as_ref().is_some_and(|t| time >= t.1);
+                match &ui.session {
+                    Some(s) => {
+                        (flash_done || s.tick_changes_view(clock_ms), !s.phase.mic_open())
                     }
+                    None => (flash_done, true),
                 }
-                "speech" => {
-                    let text = event["text"].as_str().unwrap_or("");
-                    let is_final = event["final"].as_bool().unwrap_or(false);
-                    if let Some(session) = &mut ui.session {
-                        session.speech_for_take(text, is_final, event["take"].as_u64());
-                    }
-                    ui.apply_pending();
-                }
-                "voice" => {
-                    ui.voice_ready = event["ready"].as_bool().unwrap_or(false);
-                    ui.voice_status = event["message"].as_str().unwrap_or("").into();
-                }
-                "connection" => {
-                    ui.connection = event["message"].as_str().unwrap_or("").into();
-                }
-                "paired" => {
-                    ui.pair_busy = false;
-                    ui.pairing = false;
-                    ui.message.clear();
-                }
-                "pair_error" => {
-                    ui.pair_busy = false;
-                    ui.message = event["message"]
-                        .as_str()
-                        .unwrap_or("Could not connect.")
-                        .into();
-                }
-                "permission_granted" => {
-                    if let Some(s) = &mut ui.session {
-                        s.start();
-                    }
-                }
-                "audio_error" => {
-                    ui.action("pause");
-                    ui.message = event["message"]
-                        .as_str()
-                        .unwrap_or("Microphone unavailable")
-                        .into();
-                }
-                "pause" => ui.action("pause"),
-                "error" => ui.message = event["message"].as_str().unwrap_or("").into(),
-                "import" => {
-                    ui.import(
-                        event["name"].as_str().unwrap_or("script.txt"),
-                        event["text"].as_str().unwrap_or(""),
-                    )
-                }
-                _ => {}
+            };
+            if write {
+                tick_clock(&mut state.write());
+            } else if idle {
+                UNTICKED_MS.with(|c| c.set(0));
             }
+        } else {
+            let mut ui = state.write();
+            // Time saved up so far belongs to the state before these events.
+            ui.flush_clock();
+            for event in events {
+                match event["type"].as_str().unwrap_or("") {
+                    // Event times are ignored: DOM and native clocks differ.
+                    "key" if ui.session.is_some() => {
+                        let action = remote.key(
+                            event["key"].as_str().unwrap_or(""),
+                            event["down"].as_bool().unwrap_or(false),
+                            event["repeat"].as_bool().unwrap_or(false),
+                            time,
+                        );
+                        if let Some(action) = action {
+                            ui.remote_action(action);
+                        }
+                    }
+                    "key" => {}
+                    "key_reset" => remote.reset(),
+                    _ => handle_event(&mut ui, &event),
+                }
+            }
+            if let Some(action) = fired.or_else(|| remote.tick(time)) {
+                ui.remote_action(action);
+            }
+            tick_clock(&mut ui);
         }
-        if state.peek().session.as_ref().is_some_and(|s| s.phase == Phase::Countdown) {
-            let mut ui = state.write();
-            if let Some(session) = &mut ui.session {
-                // A long gap (backgrounded tab, stalled timer) counts as one short step.
-                session.tick(elapsed.min(250));
+        let wanted = (state.peek().prompting(), remote.volume_keys);
+        if remote_key != Some(wanted) {
+            if !wanted.0 {
+                remote.reset();
             }
-            ui.apply_pending();
+            set_remote(wanted.0, &serde_json::to_string(&remote.keys()).unwrap());
+            native_call(
+                "remote",
+                &json!({ "prompting" : wanted.0, "volume" : wanted.1 }).to_string(),
+            );
+            remote_key = Some(wanted);
+        }
+        // Script vocabulary, sent before the mic logic so a fresh start uses it.
+        let candidate = {
+            let ui = state.peek();
+            ui.session
+                .as_ref()
+                .filter(|_| ui.native && ui.settings.script_grammar)
+                .map(|s| (s.script.id.clone(), s.script.revision))
+        };
+        if grammar_seen.as_ref() != Some(&candidate) {
+            let (key, payload, too_large) = match &state.peek().session {
+                Some(s) if candidate.is_some() => match grammar_json(&s.script) {
+                    Some(json) => (candidate.clone(), json, false),
+                    None => (None, String::new(), grammar_skip_reason(&s.script) == Some("too_large")),
+                },
+                _ => (None, String::new(), false),
+            };
+            if grammar_key.as_ref() != Some(&key) {
+                native_call("grammar", &payload);
+                grammar_key = Some(key);
+            }
+            if too_large {
+                state.write().message =
+                    "Script vocabulary is too large; using the full vocabulary.".into();
+            }
+            grammar_seen = Some(candidate);
         }
         let desired = state.peek().native && state.peek().voice_ready
-            && state.peek().session.as_ref().is_some_and(|s| s.phase.listening());
+            && state.peek().session.as_ref().is_some_and(|s| s.phase.mic_open());
+        // The voice tag changes with each take and when a pre-roll ends, so
+        // the reset sent then also drops speech still in flight from "3-2-1".
         let take_key = state
             .peek()
             .session
             .as_ref()
-            .map(|s| (s.script.id.clone(), s.script.revision, s.take));
+            .map(|s| (s.script.id.clone(), s.script.revision, s.voice_tag()));
         let take = take_key.as_ref().map_or(0, |k| k.2).to_string();
         if desired != audio {
             if desired {
@@ -573,6 +741,16 @@ async fn pump(mut state: Signal<Ui>) {
             }
             current_take = take_key;
             shown_word = None;
+        }
+        let mark = state.peek().session.as_ref().map(|s| (s.script.id.clone(), s.sync_mark));
+        if mark != seen_mark {
+            let roll_ended = matches!((&mark, &seen_mark), (Some((a, _)), Some((b, _))) if a == b);
+            // The voice tag changed with the roll's end, so the take_key check
+            // above has already sent "reset" (Vosk drops the "3-2-1" audio).
+            if roll_ended && state.peek().settings.sync_flash {
+                state.write().flash_until = now() + 300.0;
+            }
+            seen_mark = mark;
         }
         let follow = state.peek().follow;
         if follow && !was_following {
@@ -752,7 +930,9 @@ fn Studio(mut state: Signal<Ui>) -> Element {
             text: String::new(),
         });
     let count = words(&slide.text).len();
-    let duration = ((count as f64) / 140.0 * 60.0).ceil() as usize;
+    let duration = format_duration(slide_estimate_ms(&slide, ui.settings.speaking_wpm));
+    let script_total = format_duration(script_estimate_ms(&script, &ui.settings));
+    let end_text = end_of_slide_text(&ui.settings);
     let addresses = ui.addresses.iter().map(|a| ip_only(a)).collect::<Vec<_>>().join(" or ");
     rsx! {
         div { class: "studio-shell",
@@ -885,7 +1065,7 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                 } else {
                     div { class: "document-header",
                         div {
-                            span { class: "eyebrow", "YOUR SCRIPT" }
+                            span { class: "eyebrow", "YOUR SCRIPT · ~{script_total} TO READ" }
                             input {
                                 class: "script-title",
                                 aria_label: "Script title",
@@ -987,13 +1167,12 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                                 "+ Add slide"
                             }
                             div { class: "rail-tip",
-                                span { "5" }
+                                span { "{next_badge}" }
                                 p {
                                     "A little breathing room."
-                                    small { "Five seconds between slides." }
+                                    small { "The end of a slide {end_text}." }
                                 }
-                            }
-                        }
+                            }                        }
                         article { class: "script-editor",
                             div { class: "editor-bar",
                                 span { class: "eyebrow",
@@ -1077,7 +1256,7 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                                     strong { "{count}" }
                                     " words"
                                 }
-                                span { "About {duration}s" }
+                                span { "~{duration}" }
                                 span { class: "cue-hint", "[Directions in brackets aren’t read aloud]" }
                             }
                         }
@@ -1194,7 +1373,7 @@ fn TabletApp(mut state: Signal<Ui>) -> Element {
                                 .map(|s| words(&s.text).len())
                                 .sum();
                             let slides = script.slides.len();
-                            let minutes = (words_total as f64 / 140.0).ceil().max(1.0) as usize;
+                            let minutes = script_estimate_ms(&script, &ui.settings).div_ceil(60000).max(1);
                             rsx! {
                                 button {
                                     class: "script-row",
@@ -1234,6 +1413,14 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
     let running = session.phase.running();
     let current = session.tracker.position;
     let parts = session.tracker.words.clone();
+    // A zero-width number part is invisible; highlight its unit's last part.
+    let active = current.map(|c| unit_end(&parts, c));
+    let roll = if session.phase == Phase::Rolling {
+        Some(session.roll_ms.div_ceil(1000))
+    } else {
+        None
+    };
+    let take = session.take;
     let raw = slide.text.clone();
     let tail_start = parts.last().map(|w| w.end).unwrap_or(0);
     let tail = raw[tail_start..].to_string();
@@ -1260,10 +1447,41 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
     } else {
         current.map(|p| (p + 1) as f64 / parts.len() as f64 * 100.0).unwrap_or(0.0)
     };
+    // Lost-place hint: the next words, from word indices so cues never show.
+    let hint = if ui.settings.show_lost_hint && session.lost() { session.upcoming(6) } else { None };
+    let hint_text = hint
+        .clone()
+        .map(|r| {
+            parts[r]
+                .iter()
+                .filter(|w| w.start < w.end)
+                .map(|w| &raw[w.start..w.end])
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    let (dot, dot_label) = if session.hearing() {
+        ("dot heard", "Hearing you")
+    } else if session.phase.listening() {
+        ("dot ok pulse", "Listening")
+    } else {
+        ("dot", "Not listening")
+    };
+    let times = if parts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " · {} · ~{} left",
+            format_elapsed(session.elapsed_ms),
+            format_duration(session.time_left_ms())
+        )
+    };
     let status = if ui.preview {
         "Preview · use Next to change slides"
     } else if session.phase == Phase::Reading {
         "Listening"
+    } else if session.phase == Phase::Rolling {
+        "Get ready"
     } else if session.phase == Phase::Countdown {
         "Next slide soon"
     } else if session.phase == Phase::Holding {
@@ -1295,8 +1513,8 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                 div { class: "prompter-title",
                     strong { "{session.script.title}" }
                     small {
-                        span { class: if session.phase.listening() { "dot ok pulse" } else { "dot" } }
-                        "{status} · Slide {number}/{total}"
+                        span { class: dot, role: "img", aria_label: dot_label }
+                        "{status} · Slide {number}/{total}{times}"
                     }
                 }
                 button {
@@ -1352,10 +1570,16 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                                     let before = raw[previous..word.start].to_string();
                                     let spoken = raw[word.start..word.end].to_string();
                                     let class = match current {
-                                        Some(c) if c == i => "spoken-word active-word",
+                                        _ if active == Some(i) => "spoken-word active-word",
                                         Some(c) if i < c => "spoken-word read-word",
                                         _ => "spoken-word",
                                     };
+                                    let class = if hint.as_ref().is_some_and(|r| r.contains(&i)) {
+                                        format!("{class} hint-word")
+                                    } else {
+                                        class.to_string()
+                                    };
+                                    let first = unit_start(&parts, i);
                                     rsx! {
                                         span { class: "cue-text", "{before}" }
                                         span {
@@ -1363,8 +1587,9 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                                             class,
                                             onclick: move |_| {
                                                 let mut u = state.write();
+                                                u.flush_clock();
                                                 if let Some(s) = &mut u.session {
-                                                    s.seek(i);
+                                                    s.seek(first);
                                                 }
                                                 u.follow = true;
                                             },
@@ -1376,11 +1601,50 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                         span { class: "cue-text", "{tail}" }
                     }
                 }
+                if let Some((text, until)) = &ui.remote_toast {
+                    if now() < *until {
+                        div { class: "remote-toast", role: "status", "{text}" }
+                    }
+                }
+                if hint.is_some() {
+                    div { class: "lost-hint", role: "status",
+                        span { "Lost your place? Next: “{hint_text}”" }
+                        div {
+                            button {
+                                class: "ghost-button",
+                                onclick: move |_| state.write().action("back_sentence"),
+                                "Sentence back"
+                            }
+                            button {
+                                class: "ghost-button",
+                                onclick: move |_| state.write().action("dismiss_lost"),
+                                "Dismiss"
+                            }
+                        }
+                    }
+                }
                 if !ui.follow && running {
                     button {
                         class: "follow-pill",
                         onclick: move |_| state.write().follow = true,
                         "↓ Follow my voice"
+                    }
+                }
+                if let Some(number) = roll {
+                    div { class: "overlay",
+                        span { class: "overlay-label", "Starting in" }
+                        strong { "{number}" }
+                        span { class: "overlay-note", "Take {take}" }
+                        button {
+                            class: "primary",
+                            onclick: move |_| state.write().action("skip_roll"),
+                            "Start now"
+                        }
+                        button {
+                            class: "ghost-button",
+                            onclick: move |_| state.write().action("pause"),
+                            "Cancel"
+                        }
                     }
                 }
                 if let Some(number) = countdown {
@@ -1455,7 +1719,9 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                 button {
                     class: if running { "play paused" } else { "play" },
                     onclick: move |_| state.write().action("toggle"),
-                    if running {
+                    if session.phase == Phase::Rolling {
+                        "Cancel"
+                    } else if running {
                         "Pause"
                     } else if session.phase == Phase::Finished {
                         "Again"
@@ -1512,6 +1778,9 @@ fn SettingSlider(
                             "spacing" => ui.settings.line_spacing = v,
                             "guide" => ui.settings.guide = v,
                             "countdown_secs" => ui.settings.countdown_secs = v,
+                            "pre_roll_secs" => ui.settings.pre_roll_secs = v,
+                            "speaking_wpm" => ui.settings.speaking_wpm = v,
+                            "lost_place_secs" => ui.settings.lost_place_secs = v,
                             _ => {}
                         }
                         ui.save_settings();
@@ -1536,6 +1805,11 @@ fn SettingSwitch(mut state: Signal<Ui>, label: String, field: String, on: bool) 
                     "mirror_x" => u.settings.mirror_x = !u.settings.mirror_x,
                     "mirror_y" => u.settings.mirror_y = !u.settings.mirror_y,
                     "hold_at_end" => u.settings.hold_at_end = !u.settings.hold_at_end,
+                    "sync_flash" => u.settings.sync_flash = !u.settings.sync_flash,
+                    "show_lost_hint" => u.settings.show_lost_hint = !u.settings.show_lost_hint,
+                    "voice_resync" => u.settings.voice_resync = !u.settings.voice_resync,
+                    "volume_keys" => u.settings.volume_keys = !u.settings.volume_keys,
+                    "script_grammar" => u.settings.script_grammar = !u.settings.script_grammar,
                     _ => {}
                 }
                 u.save_settings();
@@ -1550,6 +1824,10 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
     let ui = state.read().clone();
     let end_text = end_of_slide_text(&ui.settings);
     rsx! {
+        // Outside .prompt-mirror, whose transform would confine a fixed child.
+        if now() < ui.flash_until {
+            div { class: "sync-flash" }
+        }
         if ui.help {
             div { class: "modal-backdrop",
                 div {
@@ -1590,6 +1868,16 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                     }
                     p {
                         "Put directions in [brackets]. Edits made during a take wait until Pause or completion. Cached scripts and voice following work without Wi-Fi or the PC."
+                    }
+                    p {
+                        "Numbers can be spoken naturally: say “John three sixteen” for John 3:16, “five dollars” for $5 and “twenty first” for 21st."
+                    }
+                    p {
+                        "Pre-roll: set a pre-roll in Reading settings for a 3-2-1 countdown before each take, ending in a white flash you can use to sync a separate camera. Tap Start now to skip it. The microphone opens when the countdown starts, so the first time you use voice following the permission prompt appears during the countdown; once you allow it, the countdown starts again."
+                    }
+                    p {
+                        strong { "Remote & keys. " }
+                        "A Bluetooth clicker, pedal or keyboard can drive the prompter. Page Down, Right or Down arrow: start or next slide; hold it to pause or resume. Page Up, Left or Up arrow: back one sentence; hold it to retake the slide. Space or Enter: start or pause. B or the period key (a clicker’s blank-screen button): pause. On the tablet, media keys work too (play/pause, play, pause, next and previous track), and the volume keys can act as Next and Back if you turn on Volume keys as remote. Keys do nothing while a settings sheet or this help is open."
                     }
                     p {
                         "Backup keeps your slides in an editable JSON file. Export text gives you a plain-text copy. Import accepts both. The Windows database lives in %LOCALAPPDATA%\\RustyPrompter."
@@ -1787,6 +2075,50 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                             min: 1.0,
                             max: 15.0,
                             step: 1.0,
+                        }
+                    }
+                    SettingSlider {
+                        state,
+                        label: "Pre-roll (s)",
+                        field: "pre_roll_secs",
+                        value: ui.settings.pre_roll_secs,
+                        min: 0.0,
+                        max: 10.0,
+                        step: 1.0,
+                    }
+                    if ui.settings.pre_roll_secs > 0.0 {
+                        div { class: "setting-group switches",
+                            SettingSwitch { state, label: "Sync flash", field: "sync_flash", on: ui.settings.sync_flash }
+                        }
+                    }
+                    SettingSlider {
+                        state,
+                        label: "Speaking pace (wpm)",
+                        field: "speaking_wpm",
+                        value: ui.settings.speaking_wpm,
+                        min: 80.0,
+                        max: 240.0,
+                        step: 5.0,
+                    }
+                    div { class: "setting-group switches",
+                        SettingSwitch { state, label: "Lost-place hint", field: "show_lost_hint", on: ui.settings.show_lost_hint }
+                    }
+                    if ui.settings.show_lost_hint {
+                        SettingSlider {
+                            state,
+                            label: "Hint after (s)",
+                            field: "lost_place_secs",
+                            value: ui.settings.lost_place_secs,
+                            min: 2.0,
+                            max: 15.0,
+                            step: 1.0,
+                        }
+                    }
+                    div { class: "setting-group switches",
+                        SettingSwitch { state, label: "Follow re-reading", field: "voice_resync", on: ui.settings.voice_resync }
+                        if ui.native {
+                            SettingSwitch { state, label: "Volume keys as remote", field: "volume_keys", on: ui.settings.volume_keys }
+                            SettingSwitch { state, label: "Script vocabulary (beta)", field: "script_grammar", on: ui.settings.script_grammar }
                         }
                     }
                     if ui.session.is_some() {

@@ -1,43 +1,74 @@
-# RustyPrompter
+# Rusty Teleprompter
 
-A new, subscription-free teleprompter built with **Rust and Dioxus**. It installs alongside PromptLocal and uses a separate application ID, database and pairing port.
+**A teleprompter that listens to you. Built in Rust. Free forever.**
 
-- Edit an ordered set of script slides on your Windows PC; changes autosave and sync over your private Wi-Fi network.
-- Read one slide at a time on Android. Offline speech recognition and forgiving phrase matching follow your voice.
-- Reach the end of the spoken text and a **countdown** (5 seconds by default, 1–15 in settings) opens the next nonempty slide. Pause freezes the countdown. Finishing the final slide ends the session.
-- **Retake** restarts the slide with a new take; speech from before the retake is ignored. **Sentence** steps back one sentence.
-- Optional **Hold at end of slide** (off by default) waits for you at the end of each slide instead of counting down.
-- Android listening recovers by itself from recognizer timeouts and errors, and resets on retake and slide change.
-- Mirror horizontally, vertically or both. Adjust text size, margins, line spacing, reading guide and orientation.
-- Pause during a take to apply queued PC edits; the entire active revision stays stable until then.
-- Import/export plain text and structured JSON backups that preserve slide boundaries and order.
+Write your script on your PC, read it on an Android tablet, and the text follows your voice as you speak. No subscription, no account, no cloud. Everything runs on your own devices, even with the internet off.
 
-## Implementation
+> The app installs as **RustyPrompter**.
 
-`crates/core` is the shared, deterministic Rust engine: UTF-8-aware tokenization, fuzzy phrase alignment, playback state, saved positions and revision anchoring.
+---
 
-`crates/ui` is the actual Dioxus application, compiled to WebAssembly. The same offline bundle provides the PC script studio and Android prompting interface. A small JavaScript module handles browser/platform plumbing; it does not implement the matching algorithm or playback state machine.
+## Why it's different
 
-`crates/companion` is a native Rust Windows executable using Axum, Tokio and the pure-Rust redb transactional database. It opens the local script studio in your browser and displays a small native status window. **No Python runtime is required to use it.**
+- 🆓 **Free forever.** No subscription, no trial, no ads, no paid speech service. Open source under the Apache 2.0 license: use it, change it, share it.
+- 🦀 **Built in Rust.** The voice tracking, the reading logic and the app itself are written in Rust. That makes it fast, predictable and hard to crash.
+- 🔒 **Private.** Speech recognition runs on the tablet itself. Your words and your voice never leave your devices.
+- 📴 **Works offline.** Once your script is on the tablet, you don't need Wi-Fi or your PC.
 
-`android` is a thin Kotlin platform host: the system WebView displays the bundled Rust/Dioxus UI, and the adapter handles microphone permission, offline Vosk recognition, local caching and authenticated WebSocket transport. Vosk never calls a cloud speech service. UI, matching, timing and script-version decisions remain in Rust.
+## What it does
 
-The shared UI is packaged explicitly with Cargo and upstream wasm-bindgen. This avoids a Windows path failure in Dioxus CLI 0.7.10's bundler. Dioxus itself remains the application framework; there is no dependency on a running development server or externally hosted page.
+**Follows your voice**
+- Highlights where you are as you read. Skip a word, say "um", or ad-lib a little, and it keeps up.
+- If you go back and re-read a sentence, the highlight goes back with you.
+- Reads numbers the way you say them: "John 3:16" → "John three sixteen", "$5" → "five dollars", "21st" → "twenty first".
+- A slide only finishes when you actually say its last words.
 
-## Using it
+**Made for recording video**
+- **Retake** restarts the slide in one tap. **Sentence** steps back one sentence.
+- Optional **3-2-1 countdown** before each take, ending in a white **flash** your camera can use to line up audio.
+- At the end of a slide, either count down to the next one (1–15 seconds) or **hold** until you're ready.
+- **Bluetooth clicker or foot pedal** support, so you can control everything from where you're standing.
 
-See [INSTALL.md](INSTALL.md). Downloads are generated in `dist/`:
+**Helps you stay on track**
+- A small dot lights up when the app hears you.
+- If you lose your place, a hint shows the next words.
+- Shows how long each slide and the whole script will take, plus time left while you read.
 
-- `RustyPrompter-Windows.zip`
-- `RustyPrompter-Android.apk`
-- `RustyPrompter-Source.zip`
-- `RustyPrompter-Signing-Backup.zip` — private backup, not for public sharing
+**Fits your setup**
+- Mirror the text horizontally, vertically or both (for teleprompter glass).
+- Adjust text size, margins, line spacing, reading guide and orientation.
+- Edit on your PC while the tablet reads. Changes wait until you pause, so a take is never disturbed.
+- Import and export plain text or JSON backups.
 
-The PC stores scripts in `%LOCALAPPDATA%\RustyPrompter\rustyprompter.redb` and listens on port **8766**. Editor access is restricted to the local PC. Paired tablets have read-only library access. Sync traffic is unencrypted and intended only for a trusted private LAN; do not forward the port to the internet.
+## How it works
 
-## Development
+1. **Write on your PC.** Run the Windows app. It opens a script editor in your browser. Each script is a list of slides, and everything saves automatically.
+2. **Connect your tablet.** On the same Wi-Fi, tap **Connect to PC** and enter the six-digit code from the PC.
+3. **Read.** Open a script, tap **Start**, and talk. That's it.
 
-Build scripts use Python 3.11 solely as development orchestration. They install compiler/linker tools into the parent workspace's `.tools/rustyprompter` folder and leave global PATH unchanged.
+Full setup steps, controls and settings: **[INSTALL.md](INSTALL.md)**
+
+## Remote control
+
+Any Bluetooth clicker or pedal that acts like a keyboard works.
+
+| Button | Tap | Hold (about 1 second) |
+|---|---|---|
+| Page Down / → | Start, or next slide | Pause |
+| Page Up / ← | Back one sentence | Retake the slide |
+| Space / Enter | Start or pause | — |
+
+More keys, including media keys and the optional volume-key remote, are listed in [INSTALL.md](INSTALL.md#remote-keys-clicker-pedal-keyboard).
+
+## Requirements
+
+- **PC:** Windows 10 or 11.
+- **Tablet:** Android 11 or newer. Tested target: Samsung Galaxy Tab A7 Lite.
+- Both on the same private Wi-Fi network when syncing scripts.
+
+## Building it yourself
+
+The whole project builds from source. You need Python 3.11 to run the build scripts. They download the Rust, Android and linker toolchains into a local `.tools` folder and don't change your system PATH.
 
 ```powershell
 python scripts\bootstrap.py
@@ -45,6 +76,39 @@ python scripts\android_tools.py
 python scripts\build.py
 ```
 
-`scripts/task.py cargo test -p rusty-core -p rusty-companion` runs the Rust tests. The Dioxus UI can be rebuilt separately with `python scripts\bundle_ui.py`. Cargo.lock pins dependencies. Keep `.signing` or its private backup for future Android updates.
+The Windows zip and Android APK appear in `dist/`.
 
-The first release still requires microphone, layout and 30-minute acceptance testing on the physical Galaxy Tab A7 Lite; desktop/model fixtures cannot establish tablet performance. See [VALIDATION.md](VALIDATION.md).
+Run the tests:
+
+```powershell
+python scripts\task.py cargo test -p rusty-core -p rusty-companion -p rusty-ui
+```
+
+## What's inside
+
+| Folder | What it is |
+|---|---|
+| `crates/core` | The Rust engine: voice matching, number reading, reading and countdown logic. Fully unit-tested. |
+| `crates/ui` | The app's interface, written in Rust with [Dioxus](https://dioxuslabs.com) and compiled to WebAssembly. The same interface runs on PC and tablet. |
+| `crates/companion` | The Windows app, in Rust: stores scripts and syncs them to the tablet. |
+| `android` | A thin Android wrapper. It shows the Rust interface and handles the microphone with [Vosk](https://alphacephei.com/vosk/) offline speech recognition. |
+
+All decisions about matching, timing and playback live in Rust. The Android code only passes along microphone and button events.
+
+## Privacy and security
+
+- Speech recognition never uses a cloud service.
+- The script editor only accepts connections from the PC itself. Paired tablets can read scripts but not change them.
+- Sync traffic is meant for your private home or church network. It isn't encrypted, so don't expose port 8766 to the internet.
+
+## Status
+
+Automated tests cover the engine, the PC server and the interface ([VALIDATION.md](VALIDATION.md)). Long real-world reading sessions on the tablet are still being tested.
+
+## License
+
+[Apache License 2.0](LICENSE). Free to use, change and share, forever.
+
+Building something on top of Rusty Teleprompter? Go for it, even commercially. Just give credit: if you share or sell your version, the license requires you to include the [NOTICE](NOTICE) file, which says your app is based on Rusty Teleprompter.
+
+Third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

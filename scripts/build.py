@@ -40,7 +40,7 @@ if not args.android_only:
     windows=DIST/'RustyPrompter';windows.mkdir(exist_ok=True)
     shutil.copy2(ROOT/'target/release/rusty-companion.exe',windows/'RustyPrompter.exe')
     shutil.copytree(web,windows/'web',dirs_exist_ok=True)
-    for name in ['INSTALL.md','README.md','THIRD_PARTY_NOTICES.md','VALIDATION.md']:
+    for name in ['INSTALL.md','README.md','THIRD_PARTY_NOTICES.md','VALIDATION.md','LICENSE','NOTICE']:
         if (ROOT/name).exists():shutil.copy2(ROOT/name,windows/name)
     if (ROOT/'licenses').exists():shutil.copytree(ROOT/'licenses',windows/'licenses',dirs_exist_ok=True)
     zip_folder(windows,DIST/'RustyPrompter-Windows.zip')
@@ -69,7 +69,8 @@ if not args.windows_only:
             with zipfile.ZipFile(archive) as z:z.extractall(TOOLS/'model')
             shutil.copytree(TOOLS/'model/vosk-model-small-en-us-0.15',model)
     notices=assets/'notices';notices.mkdir(exist_ok=True)
-    if (ROOT/'THIRD_PARTY_NOTICES.md').exists():shutil.copy2(ROOT/'THIRD_PARTY_NOTICES.md',notices/'THIRD_PARTY_NOTICES.md')
+    for name in ['THIRD_PARTY_NOTICES.md','LICENSE','NOTICE']:
+        if (ROOT/name).exists():shutil.copy2(ROOT/name,notices/name)
     if (ROOT/'licenses').exists():shutil.copytree(ROOT/'licenses',notices/'licenses',dirs_exist_ok=True)
     signing=ROOT/'.signing';signing.mkdir(exist_ok=True);config=signing/'config.json'
     if not config.exists():config.write_text(json.dumps({'password':secrets.token_urlsafe(32)},indent=2))

@@ -128,6 +128,80 @@ fn settings_clamp_and_old_json() {
     assert_eq!(st.countdown_secs, 1.0);
 }
 #[test]
+fn new_settings_defaults_and_old_json() {
+    let st: Settings =
+        serde_json::from_str(r#"{"font_size":40,"hold_at_end":true,"countdown_secs":3.0}"#)
+            .unwrap();
+    assert_eq!(
+        (st.pre_roll_secs, st.speaking_wpm, st.lost_place_secs),
+        (0.0, 150.0, 5.0)
+    );
+    assert!(st.sync_flash && st.show_lost_hint && st.voice_resync);
+    assert!(!st.volume_keys && !st.script_grammar);
+    assert_eq!(
+        st,
+        Settings {
+            font_size: 40.0,
+            hold_at_end: true,
+            countdown_secs: 3.0,
+            ..Settings::default()
+        }
+    );
+}
+#[test]
+fn new_settings_clamp() {
+    let mut st = Settings {
+        pre_roll_secs: -1.0,
+        speaking_wpm: 10.0,
+        lost_place_secs: 0.5,
+        ..Settings::default()
+    };
+    st.clamp();
+    assert_eq!(
+        (st.pre_roll_secs, st.speaking_wpm, st.lost_place_secs),
+        (0.0, 80.0, 2.0)
+    );
+    st = Settings {
+        pre_roll_secs: 99.0,
+        speaking_wpm: 999.0,
+        lost_place_secs: 99.0,
+        ..Settings::default()
+    };
+    st.clamp();
+    assert_eq!(
+        (st.pre_roll_secs, st.speaking_wpm, st.lost_place_secs),
+        (10.0, 240.0, 15.0)
+    );
+}
+#[test]
+fn configure_copies_new_settings() {
+    let mut s = Session::new(script());
+    assert_eq!(
+        (s.pre_roll_ms, s.roll_ms, s.sync_mark, s.wpm),
+        (0, 0, 0, 150.0)
+    );
+    assert_eq!(
+        (s.elapsed_ms, s.heard_ago_ms, s.stuck_ms, s.lost_after_ms),
+        (0, None, 0, 5000)
+    );
+    assert!(s.voice_resync);
+    s.configure(&Settings {
+        pre_roll_secs: 3.4567,
+        speaking_wpm: 170.0,
+        lost_place_secs: 7.25,
+        voice_resync: false,
+        ..Settings::default()
+    });
+    assert_eq!((s.pre_roll_ms, s.wpm, s.lost_after_ms), (3457, 170.0, 7250));
+    assert!(!s.voice_resync);
+    s.configure(&Settings {
+        show_lost_hint: false,
+        ..Settings::default()
+    });
+    assert_eq!((s.pre_roll_ms, s.wpm, s.lost_after_ms), (0, 150.0, 0));
+    assert!(s.voice_resync);
+}
+#[test]
 fn listening_phases() {
     assert!(
         Phase::Reading.listening() && Phase::Countdown.listening() && Phase::Holding.listening()
@@ -135,6 +209,9 @@ fn listening_phases() {
     assert!(
         !Phase::Paused.listening() && !Phase::Ready.listening() && !Phase::Finished.listening()
     );
+    assert!(!Phase::Rolling.listening());
+    assert!(Phase::Rolling.running());
+    assert!(Phase::Rolling.mic_open());
 }
 #[test]
 fn revision_changing_held_slide_ending_pauses() {

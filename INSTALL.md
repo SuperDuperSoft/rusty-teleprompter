@@ -38,6 +38,38 @@ If the PC shows multiple addresses, choose its Wi-Fi/LAN address. Guest Wi-Fi is
 - Put nonspoken directions in `[square brackets]`. They remain visible but are ignored by the voice matcher. Empty slides and slides containing only directions are skipped.
 - Settings pause the read and let you change font size, margins, spacing, guide position, orientation, horizontal mirroring and vertical flipping. The countdown mirrors with the script; operator controls remain convenient to use on the tablet itself.
 - Leaving the app stops the microphone and pauses the take. The screen stays awake while RustyPrompter is open.
+- Numbers can be spoken naturally: "John three sixteen" for John 3:16, "five dollars" for $5, "twenty first" for 21st. If you say a number differently from how it is written (for example "two thousand twenty four" for 2024), type the words in the script.
+- The dot by the title lights when the app hears new speech. If you keep speaking without the highlight moving (5 s by default), a **Lost your place?** pill shows the next words, with **Sentence back** and **Dismiss**.
+- The prompter header shows time read and an estimate of time left. Studio shows an estimate per slide and for the whole script; the tablet home list shows minutes per script.
+
+### Pre-roll
+
+With **Pre-roll** above 0 in the Aa settings sheet, Start, or resuming a paused reading (and Retake or Sentence during a take, and starting again after Finished), shows a 3-2-1 countdown before listening begins. Resuming a paused end-of-slide countdown or hold does not pre-roll. It ends in a short white **sync flash** (switch off with **Sync flash**) that a separate camera can use to line up audio. **Start now** skips the rest of the countdown; **Cancel** pauses. Pausing during a pre-roll and resuming plays the full pre-roll again. Automatic slide changes never pre-roll, but changing slides during a pre-roll (Next, Back or tapping a slide) restarts it on the new slide, and Next from a paused hold at end of slide reads the next slide with a pre-roll.
+
+The microphone opens when the pre-roll starts, so the very first time you use voice following, Android's microphone permission prompt appears during the countdown. The prompt pauses the take; once you allow it, the countdown starts over by itself. Speech during the countdown is ignored.
+
+### Remote keys (clicker, pedal, keyboard)
+
+Pair a Bluetooth clicker or pedal that acts as a keyboard with the tablet (or use a PC keyboard in the browser Preview). Keys work only while the prompter is shown and no settings sheet, help or dialog is open.
+
+| Key | Press | Hold (about 1 s) |
+|---|---|---|
+| Page Down, Right arrow, Down arrow, Next track | Start, or next slide | Pause / resume |
+| Page Up, Left arrow, Up arrow, Previous track | Back one sentence | Retake the slide |
+| Space, Enter, Play/Pause | Start or pause | — |
+| Play | Start or resume | — |
+| Pause, B, period (a clicker's blank-screen button) | Pause | — |
+| Volume up / down (only with **Volume keys as remote** on, tablet only) | Like Page Down / Page Up | Like Page Down / Page Up |
+
+A quick repeat of the same action (within 0.4 s of the last one) is ignored, so a bouncy clicker cannot skip slides, and a second Next right after Start does not cancel the pre-roll. After Finished, Next starts the script again from the first slide. Media keys are reliable on the tablet only; desktop browsers usually keep them for the operating system. A large toast confirms each remote action.
+
+### Reading settings
+
+The Aa settings sheet also has: **Pre-roll (s)** (0 = off, up to 10), **Sync flash**, **Speaking pace (wpm)** for estimates (80–240, default 150), **Lost-place hint** and **Hint after (s)** (2–15, default 5), **Follow re-reading** (on by default; moves the highlight back when you re-read earlier text), and on the tablet **Volume keys as remote** (off by default) and **Script vocabulary (beta)** (off by default). Script vocabulary limits recognition to the script's words; it restarts the microphone when switched or when the script changes, and falls back to the full vocabulary with a message for very large scripts or if the model cannot build it. Older saved settings load with these defaults.
+
+### After upgrading from the previous release
+
+Slides containing numbers are now split into words differently, so the reading position saved by the previous release is not restored: the script you were last reading opens at its first slide instead of where you stopped. This happens only once, on the first open after the upgrade.
 
 Desktop **Preview** shows the prompting interface with manual navigation. Offline voice recognition runs in the Android app; the browser preview does not claim to use the PC microphone.
 
@@ -53,7 +85,7 @@ Keep **RustyPrompter-Signing-Backup.zip** privately backed up. It contains the k
 
 ## Physical-device check
 
-Before relying on the app for a shoot, install it on the actual A7 Lite and read for **30 minutes** at your normal microphone distance. Check voice latency, skipped words/sentences, pauses, ad-libs, all four mirror combinations, both orientations, countdown pause/resume and a mid-take PC edit. These checks require the tablet; automated desktop tests do not replace them.
+Before relying on the app for a shoot, install it on the actual A7 Lite and read for **30 minutes** at your normal microphone distance. Check voice latency, skipped words/sentences, pauses, ad-libs, all four mirror combinations, both orientations, countdown pause/resume and a mid-take PC edit. If you use them, also check your clicker or pedal (press and hold), the pre-roll and sync flash on your camera, and Script vocabulary. These checks require the tablet; automated desktop tests do not replace them.
 
 ## Rebuild
 
