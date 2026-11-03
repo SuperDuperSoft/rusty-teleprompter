@@ -182,6 +182,24 @@ fn repeat_after_stuck_discard_does_not_refire() {
 }
 
 #[test]
+fn fresh_press_after_lost_key_up_is_not_swallowed() {
+    // Hold fires, then the key-up is lost (e.g. a system dialog took focus).
+    let mut r = Remote::new(false);
+    r.key("PageDown", true, false, 0.0);
+    assert_eq!(r.tick(900.0), Some(Toggle));
+    assert_eq!(r.tick(10_000.0), None);
+    // The user's next real press works as a normal short press.
+    assert_eq!(press(&mut r, "PageDown", 20_000.0), vec![Forward]);
+    // And a repeat down after a stuck discard still cannot re-arm the hold.
+    let mut r = Remote::new(false);
+    r.key("PageDown", true, false, 0.0);
+    r.tick(900.0);
+    r.tick(10_000.0);
+    assert_eq!(r.key("PageDown", true, true, 10_100.0), None);
+    assert_eq!(r.tick(12_000.0), None);
+}
+
+#[test]
 fn reset_clears_held() {
     let mut r = Remote::new(false);
     r.key("PageDown", true, false, 0.0);
@@ -286,4 +304,18 @@ fn keys_list_matches_bindings() {
         assert!(keys.contains(&" ") && keys.contains(&"b") && keys.contains(&"."));
         assert_eq!(keys.contains(&"AudioVolumeUp"), volume);
     }
+}
+
+#[test]
+fn queued_key_up_applied_before_late_tick_is_a_short_press() {
+    // The pump drains queued key events before ticking the hold timer: a
+    // release that sat in the queue past HOLD_MS is still a short press.
+    let mut r = Remote::new(false);
+    assert_eq!(r.key("PageUp", true, false, 40.0), None);
+    assert_eq!(r.key("PageUp", false, false, 940.0), Some(BackSentence));
+    assert_eq!(r.tick(940.0), None);
+    let mut r = Remote::new(false);
+    assert_eq!(r.key("PageDown", true, false, 40.0), None);
+    assert_eq!(r.key("PageDown", false, false, 1200.0), Some(Forward));
+    assert_eq!(r.tick(1200.0), None);
 }

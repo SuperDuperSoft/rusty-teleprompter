@@ -71,7 +71,8 @@ struct Held {
 pub struct Remote {
     pub volume_keys: bool,
     held: Option<Held>,
-    /// A key discarded as stuck, ignored until its key-up.
+    /// A key discarded as stuck: its repeats and key-up are ignored until its
+    /// key-up or a fresh press.
     ignored: Option<&'static str>,
     last_fire: Option<(RemoteAction, f64)>,
 }
@@ -103,10 +104,16 @@ impl Remote {
     ) -> Option<RemoteAction> {
         let &(key, short, hold, _) = binding(key, self.volume_keys)?;
         if self.ignored == Some(key) {
-            if !down {
-                self.ignored = None;
+            // Auto-repeat and the late key-up of the stuck press are dropped;
+            // a fresh (non-repeat) press means the key-up was lost, so the
+            // key is handled normally again.
+            if !down || repeat {
+                if !down {
+                    self.ignored = None;
+                }
+                return None;
             }
-            return None;
+            self.ignored = None;
         }
         let mine = self.held.as_ref().is_some_and(|h| h.key == key);
         if !down {

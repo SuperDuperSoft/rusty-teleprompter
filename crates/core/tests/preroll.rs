@@ -66,14 +66,34 @@ fn speech_ignored_while_rolling() {
     let mut s = session(3.0, false);
     s.start();
     let take = s.take;
-    s.speech_for_take("welcome to our bright", false, Some(take));
+    let tag = s.voice_tag();
+    s.speech_for_take("welcome to our bright", false, Some(tag));
     assert_eq!(s.tracker.position, None);
     assert_eq!(s.tracker.last_outcome, Outcome::Idle);
     s.tick(3000);
     assert_eq!(s.take, take);
-    s.speech_for_take("welcome to our bright", false, Some(take));
+    let tag = s.voice_tag();
+    s.speech_for_take("welcome to our bright", false, Some(tag));
     assert_eq!(s.tracker.position, None);
-    s.speech_for_take("welcome to our bright", false, Some(take));
+    s.speech_for_take("welcome to our bright", false, Some(tag));
+    assert_eq!(s.tracker.position, Some(3));
+}
+#[test]
+fn roll_speech_in_flight_after_roll_end_is_dropped() {
+    // Speech recognised during "3-2-1" carries the roll's tag; once the roll
+    // ends the tag changes (the take number does not), so a partial that
+    // arrives after the roll ended cannot move the highlight.
+    let mut s = session(3.0, false);
+    s.start();
+    let (take, roll_tag) = (s.take, s.voice_tag());
+    s.tick(3000);
+    assert_eq!((s.phase, s.take), (Phase::Reading, take));
+    assert_ne!(s.voice_tag(), roll_tag);
+    s.speech_for_take("welcome to our bright", false, Some(roll_tag));
+    s.speech_for_take("welcome to our bright", false, Some(roll_tag));
+    assert_eq!(s.tracker.position, None);
+    s.speech_for_take("welcome to our bright", false, Some(s.voice_tag()));
+    s.speech_for_take("welcome to our bright", false, Some(s.voice_tag()));
     assert_eq!(s.tracker.position, Some(3));
 }
 #[test]
@@ -188,7 +208,7 @@ fn stale_take_speech_after_roll_is_dropped() {
     s.tick(3000);
     s.speech_for_take("welcome to our bright", true, Some(old));
     assert_eq!(s.tracker.position, None);
-    s.speech_for_take("welcome to our bright", true, Some(s.take));
+    s.speech_for_take("welcome to our bright", true, Some(s.voice_tag()));
     assert_eq!(s.tracker.position, Some(3));
 }
 #[test]

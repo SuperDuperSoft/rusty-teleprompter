@@ -44,7 +44,7 @@ If the PC shows multiple addresses, choose its Wi-Fi/LAN address. Guest Wi-Fi is
 
 ### Pre-roll
 
-With **Pre-roll** above 0 in the Aa settings sheet, Start or Resume (and Retake or Sentence during a take, and starting again after Finished) shows a 3-2-1 countdown before listening begins. It ends in a short white **sync flash** (switch off with **Sync flash**) that a separate camera can use to line up audio. **Start now** skips the rest of the countdown; **Cancel** pauses. Pausing during a pre-roll and resuming plays the full pre-roll again. Slide changes never pre-roll.
+With **Pre-roll** above 0 in the Aa settings sheet, Start, or resuming a paused reading (and Retake or Sentence during a take, and starting again after Finished), shows a 3-2-1 countdown before listening begins. Resuming a paused end-of-slide countdown or hold does not pre-roll. It ends in a short white **sync flash** (switch off with **Sync flash**) that a separate camera can use to line up audio. **Start now** skips the rest of the countdown; **Cancel** pauses. Pausing during a pre-roll and resuming plays the full pre-roll again. Automatic slide changes never pre-roll, but changing slides during a pre-roll (Next, Back or tapping a slide) restarts it on the new slide, and Next from a paused hold at end of slide reads the next slide with a pre-roll.
 
 The microphone opens when the pre-roll starts, so the very first time you use voice following, Android's microphone permission prompt appears during the countdown. The prompt pauses the take; once you allow it, the countdown starts over by itself. Speech during the countdown is ignored.
 

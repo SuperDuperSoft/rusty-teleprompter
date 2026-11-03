@@ -514,7 +514,10 @@ fn finish_roll(&mut self);  // phase = Reading; roll_ms = 0; sync_mark += 1; tra
 ```
 
 `finish_roll` never bumps `take` (the take started when the roll did); a
-Back resync never bumps `take` either.
+Back resync never bumps `take` either. The mic is tagged with
+`voice_tag()` = `take + sync_mark` instead of `take`, so the tag changes
+when the roll ends and `speech_for_take` drops "3-2-1" speech still in
+flight after the roll-end `reset`.
 
 Entry rules (roll only when `pre_roll_ms > 0` and the slide has words;
 otherwise behaviour is exactly today's):
@@ -789,9 +792,10 @@ Rules (from PromptLocal, adapted):
 - A down of a different bound key discards the previous held key without
   firing, then is handled normally (a no-hold key fires at once).
 - `tick` discards a held key older than `STUCK_KEY_MS` (lost key-up) and
-  puts it in `ignored`: all events for that key are ignored until its
+  puts it in `ignored`: repeat downs for that key are ignored until its
   key-up (which clears `ignored` and fires nothing). This stops auto-repeat
-  from re-arming the hold.
+  from re-arming the hold. A non-repeat down clears `ignored` and is handled
+  normally (the key-up was lost, so this is a fresh press).
 - **Repeat guard (debounce).** A short action equal to `last_fire`'s action
   within `REPEAT_GUARD_MS` of it is dropped, and the drop **extends** the
   guard (`last_fire` time = now). So a double tap, key bounce, or a cheap

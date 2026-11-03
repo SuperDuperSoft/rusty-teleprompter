@@ -79,6 +79,17 @@ fn hold_mode_has_no_gaps() {
     assert_eq!(script_estimate_ms(&sc, &settings), 6000);
 }
 #[test]
+fn format_elapsed_rounds_down() {
+    // The header redraws when elapsed_ms / 1000 changes, so the shown second
+    // must change at the same boundary (never "0:02" at 1.02 s).
+    assert_eq!(format_elapsed(0), "0:00");
+    assert_eq!(format_elapsed(999), "0:00");
+    assert_eq!(format_elapsed(1000), "0:01");
+    assert_eq!(format_elapsed(1020), "0:01");
+    assert_eq!(format_elapsed(61999), "1:01");
+    assert_eq!(format_elapsed(3723500), "1:02:03");
+}
+#[test]
 fn format_duration_cases() {
     assert_eq!(format_duration(0), "0:00");
     assert_eq!(format_duration(999), "0:01");

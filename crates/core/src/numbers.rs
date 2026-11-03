@@ -246,10 +246,10 @@ pub(crate) fn numeric(text: &str, s: usize, out: &mut Vec<Word>) -> Option<usize
             r"^\$[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{2})?",
             r"^\$[0-9]+(?:\.[0-9]{2})?",
             r"^\$(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\.[0-9]+",
-            r"^[0-9]+(?:\.[0-9]+)?%",
-            r"^[0-9]{1,3}(?:,[0-9]{3})+",
+            r"^(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?%",
+            r"^[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?",
             r"^[0-9]+\.[0-9]+",
-            r"^[0-9]+(?i-u:st|nd|rd|th)",
+            r"^(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?i-u:st|nd|rd|th)",
             r"^[0-9]+",
         ]
         .map(|p| Regex::new(p).unwrap())
@@ -266,12 +266,12 @@ pub(crate) fn numeric(text: &str, s: usize, out: &mut Vec<Word>) -> Option<usize
     })?;
     match form {
         0 => {
+            // (start, end, words) per part; "00" parts say nothing.
             let mut at = 0;
-            let parts: Vec<_> = m.split(|c: char| !c.is_ascii_digit()).collect();
-            for (i, p) in parts.iter().enumerate() {
+            let mut parts = vec![];
+            for p in m.split(|c: char| !c.is_ascii_digit()) {
                 let start = at + m[at..].find(p).unwrap_or(0);
                 at = start + p.len();
-                let last = i + 1 == parts.len();
                 let words = if p.len() >= 2 && p.bytes().all(|b| b == b'0') {
                     vec![]
                 } else if p.len() == 2 && p.starts_with('0') {
@@ -281,7 +281,19 @@ pub(crate) fn numeric(text: &str, s: usize, out: &mut Vec<Word>) -> Option<usize
                 } else {
                     spell(p)
                 };
-                let unit_end = if last { end } else { at };
+                parts.push((start, at, words));
+            }
+            // A speaking part's unit runs over the silent parts after it, and
+            // the last speaking part's unit runs to the end of the match.
+            for i in 0..parts.len() {
+                if parts[i].2.is_empty() {
+                    continue;
+                }
+                let unit_end = match (i + 1..parts.len()).find(|&k| !parts[k].2.is_empty()) {
+                    Some(k) => parts[k - 1].1,
+                    None => end,
+                };
+                let (start, words) = (parts[i].0, std::mem::take(&mut parts[i].2));
                 unit(out, owned(words), s + start, s + unit_end);
             }
         }
@@ -310,15 +322,16 @@ pub(crate) fn numeric(text: &str, s: usize, out: &mut Vec<Word>) -> Option<usize
             unit(out, owned(words), s, s + end);
         }
         4 => {
-            let mut words = decimal(&m[..m.len() - 1]);
+            let mut words = decimal(&m[..m.len() - 1].replace(',', ""));
             words.push("percent");
             unit(out, owned(words), s, s + end);
         }
-        5 => unit(out, owned(spell(&m.replace(',', ""))), s, s + end),
+        5 => unit(out, owned(decimal(&m.replace(',', ""))), s, s + end),
         6 => unit(out, owned(decimal(m)), s, s + end),
         7 => {
-            // ASCII digits then a two-letter ASCII suffix.
-            let d = m.trim_end_matches(|c: char| !c.is_ascii_digit());
+            // ASCII digits (maybe grouped) then a two-letter ASCII suffix.
+            let d = m.replace(',', "");
+            let d = d.trim_end_matches(|c: char| !c.is_ascii_digit());
             let words = match d.parse::<u64>() {
                 Ok(n) if d.len() <= 12 => ordinal(n),
                 _ => owned(digits(d)),

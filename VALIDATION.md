@@ -4,12 +4,12 @@
 
 ### Automated checks
 
-- **222 shared Rust engine tests** passed: cleanup 9, endings 10, estimate 12, feedback 15, grammar 8, highlight 4, hold 20, jumps 11, numbers 19, playback 37, preroll 24, remote 20, resync 16, retakes 17. New areas: number and verse normalization, hypothesis cleanup, tracker outcome and guarded end-of-slide, voice backward resync, 3-2-1 pre-roll and Forward, heard dot and lost-place timing, run-time estimates, the remote key mapper (hold, debounce, stuck keys, down/up-pair clickers) and the script vocabulary / `[unk]` handling.
+- **242 shared Rust engine tests** passed on the final code after the review fixes: cleanup 10, endings 12, estimate 13, feedback 15, grammar 8, highlight 4, hold 20, jumps 11, numbers 23, playback 37, preroll 29, remote 22, resync 21, retakes 17. These include the regression tests for the review fixes (ASCII ordinal suffixes, decimal dollar amounts, common-word slide tails, ignoring read-ahead repeats during back resync, the roll guard and roll_ms clearing, among others). New areas: number and verse normalization, hypothesis cleanup, tracker outcome and guarded end-of-slide, voice backward resync, 3-2-1 pre-roll and Forward, heard dot and lost-place timing, run-time estimates, the remote key mapper (hold, debounce, stuck keys, down/up-pair clickers) and the script vocabulary / `[unk]` handling.
 - The **64-event offline Vosk replay** still reaches the correct ending, and never triggers a backward resync.
 - **18 Rust server integration tests** passed.
 - **4 UI unit tests** (remote toast text) passed natively.
-- Clippy passed with warnings treated as errors for core, companion and tests, and for the UI crate on wasm32.
-- The Dioxus/WASM bundle built. The Android release build (lintRelease and assembleRelease) passed.
+- Clippy passed with warnings treated as errors for core, companion and tests, and for the UI crate on wasm32 (re-run on the final code).
+- The Dioxus/WASM bundle built and the Android release build (lintRelease and assembleRelease) passed, both re-run on the final code.
 
 ### Browser checks (QA page with the test adapter)
 

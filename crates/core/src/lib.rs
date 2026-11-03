@@ -1002,9 +1002,17 @@ impl Session {
             }
         }
     }
-    /// Applies speech only if it belongs to the current take (or is untagged).
-    pub fn speech_for_take(&mut self, text: &str, is_final: bool, take: Option<u64>) {
-        if take.is_some_and(|t| t != self.take) {
+    /// Tag the mic's speech must carry to be applied: changes with every new
+    /// take and again when a pre-roll ends (take + sync_mark, both only ever
+    /// grow), so speech recognised during "3-2-1" that is still in flight
+    /// after the roll is dropped as stale.
+    pub fn voice_tag(&self) -> u64 {
+        self.take + self.sync_mark
+    }
+    /// Applies speech only if its tag is the current `voice_tag()` (or it is
+    /// untagged).
+    pub fn speech_for_take(&mut self, text: &str, is_final: bool, tag: Option<u64>) {
+        if tag.is_some_and(|t| t != self.voice_tag()) {
             return;
         }
         self.speech(text, is_final);
@@ -1413,6 +1421,11 @@ pub fn script_estimate_ms(script: &Script, settings: &Settings) -> u64 {
         (settings.countdown_secs * 1000.0).round() as u64
     };
     estimate_ms(counts.iter().sum(), settings.speaking_wpm) + playable.saturating_sub(1) * gap
+}
+/// Elapsed time as format_duration shows it, but with seconds rounded down,
+/// so the shown second changes exactly when `elapsed_ms / 1000` does.
+pub fn format_elapsed(ms: u64) -> String {
+    format_duration(ms / 1000 * 1000)
 }
 /// "0:42", "12:05", "1:02:03" (seconds rounded up; 0 → "0:00").
 pub fn format_duration(ms: u64) -> String {

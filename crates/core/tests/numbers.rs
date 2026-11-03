@@ -96,6 +96,32 @@ fn verse_range_and_time() {
     assert_eq!(said("10:00"), "ten");
 }
 #[test]
+fn silent_time_parts_stay_inside_the_unit() {
+    let text = "Service starts at 10:00 sharp";
+    assert_eq!(said(text), "service starts at ten sharp");
+    assert_eq!(spans(text), vec!["Service", "starts", "at", "10:00", "sharp"]);
+    assert_eq!(said("9:00-10:00"), "nine ten");
+    assert_eq!(spans("9:00-10:00"), vec!["9:00", "10:00"]);
+    assert_eq!(spans("10:00-30"), vec!["10:00", "30"]);
+}
+#[test]
+fn grouped_numbers_with_fraction_percent_or_ordinal() {
+    let text = "The budget is 1,250.75 this year";
+    assert_eq!(
+        said(text),
+        "the budget is one thousand two hundred fifty point seven five this year"
+    );
+    assert_eq!(spans(text).last(), Some(&"year"));
+    assert!(spans(text).contains(&"1,250.75"));
+    assert_eq!(said("1,000.00"), "one thousand point zero zero");
+    assert_eq!(said("1,000%"), "one thousand percent");
+    assert_eq!(said("1,000.5%"), "one thousand point five percent");
+    assert_eq!(said("1,000th"), "one thousandth");
+    assert_eq!(said("1,000,000th"), "one millionth");
+    // a sentence-ending period is not a fraction
+    assert_eq!(said("It was 1,000. Then"), "it was one thousand then");
+}
+#[test]
 fn letters_next_to_digits_unchanged() {
     assert_eq!(said("3D"), "3d");
     assert_eq!(said("mp3"), "mp3");

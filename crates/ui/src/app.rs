@@ -20,6 +20,13 @@ extern "C" {
     fn follow_word(index: usize, guide: f64, force: bool);
     fn set_remote(prompting: bool, keys_json: &str);
 }
+thread_local! {
+    /// Session time the pump has measured but not yet ticked. Ticks are
+    /// batched so the prompter only re-renders when something it shows
+    /// changes; any change to the session first charges this time to the
+    /// state that was current while it passed (see Ui::flush_clock).
+    static UNTICKED_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 #[derive(Clone)]
 struct Ui {
     tablet: bool,
@@ -275,7 +282,16 @@ impl Ui {
             && self.session.as_ref().is_some_and(|s| !s.phase.running()) && self.native
             && !self.voice_ready
     }
+    /// Ticks the session by the batched pump time, so time that passed before
+    /// a change is charged to the state it passed in, not the new one.
+    fn flush_clock(&mut self) {
+        let ms = UNTICKED_MS.with(|c| c.replace(0));
+        if let Some(session) = &mut self.session {
+            session.tick(ms);
+        }
+    }
     fn action(&mut self, action: &str) {
+        self.flush_clock();
         if self.voice_blocked(action) {
             self.message = self.voice_status.clone();
             return;
@@ -572,11 +588,8 @@ fn handle_event(ui: &mut Ui, event: &Value) {
     }
 }
 /// Ticks the session by the batched clock and clears an expired flash.
-fn tick_clock(ui: &mut Ui, clock_ms: &mut u64) {
-    if let Some(session) = &mut ui.session {
-        session.tick(*clock_ms);
-    }
-    *clock_ms = 0;
+fn tick_clock(ui: &mut Ui) {
+    ui.flush_clock();
     if ui.flash_until > 0.0 && now() >= ui.flash_until {
         ui.flash_until = 0.0;
     }
@@ -594,9 +607,6 @@ async fn pump(mut state: Signal<Ui>) {
     let mut current_take: Option<(String, u64, u64)> = None;
     let mut shown_word = None;
     let mut was_following = true;
-    // Session time not yet ticked; ticks are batched so the prompter only
-    // re-renders when something it shows changes.
-    let mut clock_ms: u64 = 0;
     // (script id, sync_mark) last seen; a change within one script means a
     // pre-roll just ended.
     let mut seen_mark: Option<(String, u64)> = None;
@@ -613,11 +623,16 @@ async fn pump(mut state: Signal<Ui>) {
         let elapsed = (time - previous).max(0.0) as u64;
         previous = time;
         // A long gap (backgrounded tab, stalled timer) counts as one short step.
-        clock_ms += elapsed.min(250);
+        let clock_ms = UNTICKED_MS.with(|c| {
+            c.set(c.get() + elapsed.min(250));
+            c.get()
+        });
         remote.volume_keys = state.peek().settings.volume_keys;
-        let fired = remote.tick(time);
         let events: Vec<Value> = serde_json::from_str(&drain_events())
             .unwrap_or_default();
+        // The hold timer is checked after queued key events are applied, so a
+        // key-up that waited in the queue past HOLD_MS is still a short press.
+        let fired = if events.is_empty() { remote.tick(time) } else { None };
         if events.is_empty() && fired.is_none() {
             let (write, idle) = {
                 let ui = state.peek();
@@ -631,15 +646,14 @@ async fn pump(mut state: Signal<Ui>) {
                 }
             };
             if write {
-                tick_clock(&mut state.write(), &mut clock_ms);
+                tick_clock(&mut state.write());
             } else if idle {
-                clock_ms = 0;
+                UNTICKED_MS.with(|c| c.set(0));
             }
         } else {
             let mut ui = state.write();
-            if let Some(action) = fired {
-                ui.remote_action(action);
-            }
+            // Time saved up so far belongs to the state before these events.
+            ui.flush_clock();
             for event in events {
                 match event["type"].as_str().unwrap_or("") {
                     // Event times are ignored: DOM and native clocks differ.
@@ -659,7 +673,10 @@ async fn pump(mut state: Signal<Ui>) {
                     _ => handle_event(&mut ui, &event),
                 }
             }
-            tick_clock(&mut ui, &mut clock_ms);
+            if let Some(action) = fired.or_else(|| remote.tick(time)) {
+                ui.remote_action(action);
+            }
+            tick_clock(&mut ui);
         }
         let wanted = (state.peek().prompting(), remote.volume_keys);
         if remote_key != Some(wanted) {
@@ -701,11 +718,13 @@ async fn pump(mut state: Signal<Ui>) {
         }
         let desired = state.peek().native && state.peek().voice_ready
             && state.peek().session.as_ref().is_some_and(|s| s.phase.mic_open());
+        // The voice tag changes with each take and when a pre-roll ends, so
+        // the reset sent then also drops speech still in flight from "3-2-1".
         let take_key = state
             .peek()
             .session
             .as_ref()
-            .map(|s| (s.script.id.clone(), s.script.revision, s.take));
+            .map(|s| (s.script.id.clone(), s.script.revision, s.voice_tag()));
         let take = take_key.as_ref().map_or(0, |k| k.2).to_string();
         if desired != audio {
             if desired {
@@ -726,14 +745,10 @@ async fn pump(mut state: Signal<Ui>) {
         let mark = state.peek().session.as_ref().map(|s| (s.script.id.clone(), s.sync_mark));
         if mark != seen_mark {
             let roll_ended = matches!((&mark, &seen_mark), (Some((a, _)), Some((b, _))) if a == b);
-            if roll_ended {
-                // Same take: Vosk drops the audio buffered during "3-2-1".
-                if audio {
-                    native_call("reset", &take);
-                }
-                if state.peek().settings.sync_flash {
-                    state.write().flash_until = now() + 300.0;
-                }
+            // The voice tag changed with the roll's end, so the take_key check
+            // above has already sent "reset" (Vosk drops the "3-2-1" audio).
+            if roll_ended && state.peek().settings.sync_flash {
+                state.write().flash_until = now() + 300.0;
             }
             seen_mark = mark;
         }
@@ -1457,7 +1472,7 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
     } else {
         format!(
             " · {} · ~{} left",
-            format_duration(session.elapsed_ms),
+            format_elapsed(session.elapsed_ms),
             format_duration(session.time_left_ms())
         )
     };
@@ -1572,6 +1587,7 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                                             class,
                                             onclick: move |_| {
                                                 let mut u = state.write();
+                                                u.flush_clock();
                                                 if let Some(s) = &mut u.session {
                                                     s.seek(first);
                                                 }
