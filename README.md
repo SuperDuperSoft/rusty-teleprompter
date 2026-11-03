@@ -12,7 +12,7 @@ Write your script on your PC, read it on an Android tablet, and the text follows
 
 - 🆓 **Free forever.** No subscription, no trial, no ads, no paid speech service. Open source under the Apache 2.0 license: use it, change it, share it.
 - 🦀 **Built in Rust.** The voice tracking, the reading logic and the app itself are written in Rust. That makes it fast, predictable and hard to crash.
-- 🔒 **Private.** Speech recognition runs on the tablet itself. Your words and your voice never leave your devices.
+- 🔒 **Private.** Speech recognition runs on your own device, tablet or PC. Your words and your voice never leave your devices.
 - 📴 **Works offline.** Once your script is on the tablet, you don't need Wi-Fi or your PC.
 
 ## What it does
@@ -38,6 +38,8 @@ Write your script on your PC, read it on an Android tablet, and the text follows
 - Mirror the text horizontally, vertically or both (for teleprompter glass).
 - Adjust text size, margins, line spacing, reading guide and orientation.
 - Edit on your PC while the tablet reads. Changes wait until you pause, so a take is never disturbed.
+- Edit scripts and slides on the tablet too. Edits save on the tablet right away and sync to the PC when it's connected. If the same script changed on both, the tablet's version is kept as a copy.
+- No tablet? **Read on this PC** follows your voice with the PC's microphone, with all the same reading features.
 - Import and export plain text or JSON backups.
 
 ## How it works
@@ -98,7 +100,7 @@ All decisions about matching, timing and playback live in Rust. The Android code
 ## Privacy and security
 
 - Speech recognition never uses a cloud service.
-- The script editor only accepts connections from the PC itself. Paired tablets can read scripts but not change them.
+- The script editor only accepts connections from the PC itself. Paired tablets can read and edit scripts. A tablet edit is rejected if the PC has a newer version, so nothing is overwritten.
 - Sync traffic is meant for your private home or church network. It isn't encrypted, so don't expose port 8766 to the internet.
 
 ## Status

@@ -430,3 +430,50 @@ async fn real_websocket_sync_and_revocation() {
     server.abort();
     let _ = server.await;
 }
+#[tokio::test]
+async fn paired_tablet_edits_with_revision_check() {
+    let (_d, s) = setup();
+    let code = s.pairing.lock().unwrap().code.clone();
+    let (_, value) = request(s.clone(), "POST", "/api/pair", Some(json!({"code":code})), false, false, None).await;
+    let token = value["token"].as_str().unwrap().to_string();
+    let call = |method: &'static str, path: String, body: Option<Value>, bearer: Option<String>| {
+        let s = s.clone();
+        async move {
+            let mut builder = Request::builder()
+                .method(method)
+                .uri(path)
+                .header("Content-Type", "application/json");
+            if let Some(t) = bearer {
+                builder = builder.header("Authorization", format!("Bearer {t}"));
+            }
+            let mut req = builder.body(Body::from(body.map(|v| v.to_string()).unwrap_or_default())).unwrap();
+            req.extensions_mut().insert(ConnectInfo("192.168.1.8:1234".parse::<SocketAddr>().unwrap()));
+            let response = router(s).oneshot(req).await.unwrap();
+            let status = response.status();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (status, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+        }
+    };
+    let mut script = sample();
+    let path = format!("/api/device/scripts/{}", script.id);
+    // Unpaired devices cannot write.
+    assert_eq!(call("PUT", path.clone(), Some(json!(script)), None).await.0, 401);
+    let (status, saved) = call("PUT", path.clone(), Some(json!(script)), Some(token.clone())).await;
+    assert_eq!(status, 200);
+    assert_eq!(saved["revision"], 1);
+    // A stale tablet copy never overwrites newer edits.
+    assert_eq!(call("PUT", path.clone(), Some(json!(script)), Some(token.clone())).await.0, 409);
+    script.revision = 1;
+    script.title = "Edited on tablet".into();
+    assert_eq!(call("PUT", path.clone(), Some(json!(script)), Some(token.clone())).await.0, 200);
+    assert_eq!(s.store.library().unwrap().scripts[0].title, "Edited on tablet");
+    assert_eq!(call("DELETE", format!("{path}?revision=1"), None, Some(token.clone())).await.0, 409);
+    assert_eq!(call("DELETE", format!("{path}?revision=2"), None, Some(token)).await.0, 200);
+    assert!(s.store.library().unwrap().scripts.is_empty());
+}
+#[tokio::test]
+async fn voice_socket_is_editor_only() {
+    let (_d, s) = setup();
+    assert_eq!(request(s.clone(), "GET", "/api/voice", None, false, false, None).await.0, 403);
+    assert_eq!(request(s, "GET", "/api/voice", None, true, true, None).await.0, 403);
+}

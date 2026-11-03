@@ -116,6 +116,10 @@ class MainActivity : Activity() {
                     "grammar" -> { grammar=payload.ifBlank{null}; if(service!=null||building==audioGeneration){stopAudio(false);startAudio()} }
                     "remote" -> try { val value=JSONObject(payload); prompting=value.optBoolean("prompting"); volumeKeys=value.optBoolean("volume"); if(prompting)web.requestFocus() } catch(_:Exception){}
                     "pair" -> try { val value=JSONObject(payload); pair(value.optString("address"),value.optString("code")) } catch (_:Exception){emit(JSONObject().put("type","pair_error").put("message","Check the PC address and code."))}
+                    "save_library" -> try { saveLibrary(JSONObject(payload),false) } catch(_:Exception){}
+                    "push" -> try { push(JSONObject(payload)) } catch(_:Exception){}
+                    "delete" -> try { val value=JSONObject(payload); deleteScript(value.getString("id"),value.getLong("revision")) } catch(_:Exception){}
+                    "refresh" -> refresh()
                     "status" -> try { val value=JSONObject(payload).put("type","status"); socket?.takeIf{it.isOpen}?.send(value.toString()) }catch(_:Exception){}
                 }
             }
@@ -143,7 +147,47 @@ class MainActivity : Activity() {
     private fun jsonPref(name:String):Any = try { JSONObject(prefs.getString(name,"{}") ?: "{}") } catch(_:Exception){JSONObject()}
     private fun emit(event:JSONObject) { main.post { if(!destroyed&&::web.isInitialized) web.evaluateJavascript("window.__rustyEvents=window.__rustyEvents||[];window.__rustyEvents.push(JSON.parse(${JSONObject.quote(event.toString())}));",null) } }
     private fun connection(message:String){connection=message;emit(JSONObject().put("type","connection").put("message",message))}
-    @Synchronized private fun saveLibrary(value:JSONObject){val clean=JSONObject().put("generation",value.optLong("generation")).put("scripts",value.getJSONArray("scripts"));val stream=cache.startWrite();try{stream.write(clean.toString().toByteArray());cache.finishWrite(stream)}catch(e:Exception){cache.failWrite(stream);throw e};emit(clean.put("type","library"))}
+    /** Writes the offline cache; `notify` sends it to the UI (PC libraries do, tablet edits already are there). */
+    @Synchronized private fun saveLibrary(value:JSONObject,notify:Boolean=true){val clean=JSONObject().put("generation",value.optLong("generation")).put("scripts",value.getJSONArray("scripts"));val stream=cache.startWrite();try{stream.write(clean.toString().toByteArray());cache.finishWrite(stream)}catch(e:Exception){cache.failWrite(stream);throw e};if(notify)emit(clean.put("type","library"))}
+    /** One authenticated call to the paired PC: (HTTP status, body). Runs on `worker`. */
+    private fun device(method:String,path:String,body:String?):Pair<Int,String>{
+        val endpoint=prefs.getString("endpoint","").orEmpty();val token=prefs.getString("token","").orEmpty()
+        require(endpoint.isNotEmpty()&&token.isNotEmpty()){"Connect this tablet to the PC first."}
+        val request=URI("$endpoint$path").toURL().openConnection()as HttpURLConnection
+        try{
+            request.requestMethod=method;request.connectTimeout=7000;request.readTimeout=7000;request.setRequestProperty("Authorization","Bearer $token")
+            if(body!=null){request.doOutput=true;request.setRequestProperty("Content-Type","application/json");request.outputStream.use{it.write(body.toByteArray())}}
+            val code=request.responseCode;val stream=if(code in 200..299)request.inputStream else request.errorStream
+            return code to (stream?.bufferedReader()?.use{it.readText()}?:"")
+        }finally{request.disconnect()}
+    }
+    private fun detail(text:String,fallback:String)=try{JSONObject(text).optString("detail",fallback)}catch(_:Exception){fallback}
+    /** Uploads a script edited on the tablet; the PC's revision check rejects stale copies with 409. */
+    private fun push(script:JSONObject){
+        val id=script.getString("id")
+        worker.execute{
+            val event=try{
+                val(code,text)=device("PUT","/api/device/scripts/"+java.net.URLEncoder.encode(id,"UTF-8"),script.toString())
+                if(code in 200..299)JSONObject().put("type","push_ok").put("id",id).put("revision",JSONObject(text).getLong("revision"))
+                else JSONObject().put("type","push_error").put("id",id).put("status",code).put("message",if(code==401)"Pairing expired · connect to PC again" else detail(text,"Could not sync with the PC."))
+            }catch(e:Exception){JSONObject().put("type","push_error").put("id",id).put("message","Could not reach the PC. Edits stay on this tablet and sync later.")}
+            emit(event)
+        }
+    }
+    private fun deleteScript(id:String,revision:Long){
+        worker.execute{
+            val event=try{
+                val(code,text)=device("DELETE","/api/device/scripts/"+java.net.URLEncoder.encode(id,"UTF-8")+"?revision=$revision",null)
+                if(code in 200..299)JSONObject().put("type","delete_ok").put("id",id)
+                else JSONObject().put("type","error").put("message",detail(text,"Could not delete on the PC."))
+            }catch(e:Exception){JSONObject().put("type","error").put("message","Could not reach the PC.")}
+            emit(event)
+        }
+    }
+    /** Fetches the PC's library now, e.g. after an edit conflict. */
+    private fun refresh(){
+        worker.execute{try{val(code,text)=device("GET","/api/library",null);if(code in 200..299)saveLibrary(JSONObject(text))}catch(_:Exception){}}
+    }
     private fun pair(raw:String,code:String){
         epoch++;socket?.close();socket=null;connection("Connecting to PC…")
         worker.execute{

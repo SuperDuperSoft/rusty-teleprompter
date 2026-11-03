@@ -29,6 +29,31 @@ def zip_folder(source,target):
         for path in source.rglob('*'):
             if path.is_file():archive.write(path,source.name+'/'+path.relative_to(source).as_posix())
 
+def model_folder():
+    """The small English Vosk model, shared by the PC and Android builds."""
+    for folder in [ROOT/'android/app/src/main/assets/model-en-us',ROOT.parent/'android/app/src/main/assets/model-en-us',TOOLS/'model/vosk-model-small-en-us-0.15']:
+        if (folder/'am/final.mdl').exists():return folder
+    archive=TOOLS/'vosk-model.zip'
+    run(['curl.exe','-fLsS','--retry','2','https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip','-o',archive])
+    with zipfile.ZipFile(archive) as z:z.extractall(TOOLS/'model')
+    return TOOLS/'model/vosk-model-small-en-us-0.15'
+
+def prepare_voice(target):
+    """libvosk.dll with its MinGW runtime DLLs, and the model, for reading on the PC."""
+    names=['libvosk.dll','libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll']
+    source=TOOLS/'vosk-win64'
+    if not all((source/n).exists() for n in names):
+        archive=TOOLS/'vosk-win64.zip'
+        run(['curl.exe','-fLsS','--retry','2','https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip','-o',archive])
+        with zipfile.ZipFile(archive) as z:
+            for member in z.namelist():
+                if member.rsplit('/',1)[-1] in names:
+                    source.mkdir(parents=True,exist_ok=True)
+                    (source/member.rsplit('/',1)[-1]).write_bytes(z.read(member))
+    target.mkdir(parents=True,exist_ok=True)
+    for n in names:shutil.copy2(source/n,target/n)
+    shutil.copytree(model_folder(),target/'model-en-us',dirs_exist_ok=True)
+
 if not args.skip_tests:run(['cargo','test','-p','rusty-core','-p','rusty-companion'])
 if not args.skip_ui:
     from bundle_ui import bundle
@@ -43,6 +68,7 @@ if not args.android_only:
     for name in ['INSTALL.md','README.md','THIRD_PARTY_NOTICES.md','VALIDATION.md','LICENSE','NOTICE']:
         if (ROOT/name).exists():shutil.copy2(ROOT/name,windows/name)
     if (ROOT/'licenses').exists():shutil.copytree(ROOT/'licenses',windows/'licenses',dirs_exist_ok=True)
+    prepare_voice(windows/'voice')
     zip_folder(windows,DIST/'RustyPrompter-Windows.zip')
 
 if not args.windows_only:
@@ -60,14 +86,7 @@ if not args.windows_only:
         shutil.rmtree(resolved)
     shutil.copytree(web,destination)
     model=assets/'model-en-us'
-    if not (model/'am/final.mdl').exists():
-        old=ROOT.parent/'android/app/src/main/assets/model-en-us'
-        if old.exists():shutil.copytree(old,model,dirs_exist_ok=True)
-        else:
-            archive=TOOLS/'vosk-model.zip'
-            run(['curl.exe','-fLsS','--retry','2','https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip','-o',archive])
-            with zipfile.ZipFile(archive) as z:z.extractall(TOOLS/'model')
-            shutil.copytree(TOOLS/'model/vosk-model-small-en-us-0.15',model)
+    if not (model/'am/final.mdl').exists():shutil.copytree(model_folder(),model,dirs_exist_ok=True)
     notices=assets/'notices';notices.mkdir(exist_ok=True)
     for name in ['THIRD_PARTY_NOTICES.md','LICENSE','NOTICE']:
         if (ROOT/name).exists():shutil.copy2(ROOT/name,notices/name)

@@ -22,6 +22,8 @@ use std::{
     time::Instant,
 };
 use subtle::ConstantTimeEq;
+pub mod voice;
+use voice::Voice;
 
 const DATA: TableDefinition<&str, &str> = TableDefinition::new("library");
 const DEVICES: TableDefinition<&str, bool> = TableDefinition::new("devices");
@@ -211,9 +213,21 @@ pub struct AppState {
     pub tablets: Mutex<HashMap<u64, Tablet>>,
     pub web: PathBuf,
     pub port: u16,
+    /// Offline voice for reading on this PC.
+    pub voice: Arc<Voice>,
 }
 impl AppState {
+    /// Voice files are looked for in a `voice` folder next to `web`.
     pub fn new(folder: &std::path::Path, web: PathBuf, port: u16) -> anyhow::Result<Arc<Self>> {
+        let voice = web.parent().map(|p| p.join("voice")).unwrap_or_default();
+        Self::with_voice(folder, web, voice, port)
+    }
+    pub fn with_voice(
+        folder: &std::path::Path,
+        web: PathBuf,
+        voice: PathBuf,
+        port: u16,
+    ) -> anyhow::Result<Arc<Self>> {
         Ok(Arc::new(Self {
             store: Store::open(folder)?,
             editor_key: secret(),
@@ -224,6 +238,7 @@ impl AppState {
             tablets: Mutex::new(HashMap::new()),
             web,
             port,
+            voice: Voice::new(voice),
         }))
     }
     pub fn addresses(&self) -> Vec<String> {
@@ -254,6 +269,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/pair", post(pair))
         .route("/api/library", get(library))
         .route("/api/unpair", post(unpair))
+        .route("/api/device/scripts/{id}", put(device_save).delete(device_delete))
+        .route("/api/voice", get(voice_socket))
         .route("/ws", get(ws))
         .route("/assets/{*path}", get(asset))
         .route("/favicon.ico", get(asset_icon))
@@ -427,6 +444,37 @@ async fn delete_script(
     state.store.delete(&id, revision)?;
     Ok(Json(serde_json::json!({"ok":true})))
 }
+/// A paired tablet saves a script it edited. The same revision check as the
+/// editor applies, so a tablet can never overwrite newer PC edits.
+async fn device_save(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(script): Json<Script>,
+) -> Result<Json<Script>, ApiError> {
+    device(&headers, &state)?;
+    if id != script.id {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Script ID mismatch".into(),
+        ));
+    }
+    Ok(Json(state.store.save(script)?))
+}
+async fn device_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    device(&headers, &state)?;
+    let revision = query
+        .get("revision")
+        .and_then(|v| v.parse().ok())
+        .ok_or(ApiError(StatusCode::BAD_REQUEST, "Missing revision".into()))?;
+    state.store.delete(&id, revision)?;
+    Ok(Json(serde_json::json!({"ok":true})))
+}
 #[derive(Deserialize)]
 struct PairInput {
     code: String,
@@ -514,4 +562,84 @@ async fn websocket(mut socket: WebSocket, state: Arc<AppState>, token: String) {
         }
     }
     state.tablets.lock().unwrap().remove(&id);
+}
+/// The PC reader's microphone bridge: the browser sends the same start, stop,
+/// reset and grammar commands the Android host gets, and receives `voice`,
+/// `speech`, `audio_error` and `grammar_error` events.
+async fn voice_socket(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+) -> Result<Response, ApiError> {
+    // Authenticate before looking at the upgrade, so strangers always get 403.
+    editor(peer, &headers, &state)?;
+    if headers.get("origin").is_none() {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Wrong editor origin".into()));
+    }
+    let upgrade = match upgrade {
+        Ok(upgrade) => upgrade,
+        Err(rejection) => return Ok(rejection.into_response()),
+    };
+    state.voice.ensure_loaded();
+    Ok(upgrade
+        .max_message_size(1_000_000)
+        .on_upgrade(move |socket| voice_session(socket, state)))
+}
+async fn voice_session(mut socket: WebSocket, state: Arc<AppState>) {
+    let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let take = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mut listener: Option<voice::Listener> = None;
+    let mut grammar: Option<String> = None;
+    let mut wanted = false;
+    let mut status = None;
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(400));
+    loop {
+        let event = tokio::select! {
+            _ = ticker.tick() => {
+                let now = state.voice.status_event();
+                if status.as_ref() == Some(&now) { continue; }
+                status = Some(now.clone());
+                now
+            }
+            Some(event) = received.recv() => event,
+            value = socket.recv() => {
+                let Some(Ok(Message::Text(text))) = value else {
+                    if matches!(value, Some(Ok(_))) { continue; }
+                    break;
+                };
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+                let payload = value["payload"].as_str().unwrap_or("");
+                if let Ok(tag) = payload.trim().parse() { take.store(tag, std::sync::atomic::Ordering::SeqCst); }
+                match value["command"].as_str().unwrap_or("") {
+                    "start" => wanted = true,
+                    "stop" => { wanted = false; listener = None; }
+                    "reset" => if let Some(l) = &listener { l.reset(); },
+                    "grammar" => {
+                        grammar = Some(payload.to_string()).filter(|g| !g.trim().is_empty());
+                        listener = None;
+                    }
+                    _ => {}
+                }
+                // A microphone that failed for good stays off until the next start.
+                if value["command"] == "start" && listener.as_ref().is_some_and(|l| !l.alive()) {
+                    listener = None;
+                }
+                if wanted && listener.is_none() && value["command"] != "reset" {
+                    let voice = state.voice.clone();
+                    let (g, t, e) = (grammar.clone(), take.clone(), events.clone());
+                    listener = tokio::task::spawn_blocking(move || voice.listen(g, t, e)).await.ok().flatten();
+                }
+                continue;
+            }
+        };
+        if event["type"] == "audio_error" {
+            wanted = false;
+        }
+        if socket.send(Message::Text(event.to_string().into())).await.is_err() {
+            break;
+        }
+    }
+    // Closing the studio tab closes the microphone.
+    tokio::task::spawn_blocking(move || drop(listener));
 }
