@@ -31,7 +31,38 @@ export function initialize() {
 }
 export function set_remote(prompting, keys_json) { window.__rustyRemote = {prompting, keys: new Set(JSON.parse(keys_json))}; }
 export function drain_events() { const values = window.__rustyEvents || []; window.__rustyEvents = []; return JSON.stringify(values); }
-export function native_call(command, payload) { if (window.RustyNative) window.RustyNative.command(command, payload); }
+export function native_call(command, payload) {
+  if (window.RustyNative) window.RustyNative.command(command, payload);
+  else if (voice?.readyState === 1 && VOICE_COMMANDS.has(command)) voice.send(JSON.stringify({command, payload}));
+}
+// On the PC the companion runs the offline voice model; this socket is its microphone bridge.
+const VOICE_COMMANDS = new Set(["start", "stop", "reset", "grammar"]);
+let voice;
+export function desktop_voice() {
+  if (window.RustyNative || voice) return;
+  const open = () => {
+    voice = new WebSocket(`ws://${location.host}/api/voice`);
+    voice.onmessage = e => { try { window.__rustyEvents.push(JSON.parse(e.data)); } catch {} };
+    voice.onclose = () => {
+      window.__rustyEvents.push({type:"voice",ready:false,message:"Voice engine offline · keep RustyPrompter open on this PC"});
+      setTimeout(open, 3000);
+    };
+  };
+  open();
+}
+// Keeps the PC screen on while reading, like the tablet does.
+let wakeLock = null, wakePending = false;
+export function keep_awake(on) {
+  if (!on) { wakeLock?.release().catch(() => {}); wakeLock = null; return; }
+  // Called every frame while reading; re-acquires after the tab was hidden.
+  if (wakeLock || wakePending || !navigator.wakeLock || document.hidden) return;
+  wakePending = true;
+  navigator.wakeLock.request("screen").then(lock => { wakeLock = lock; lock.addEventListener("release", () => { if (wakeLock === lock) wakeLock = null; }); }).catch(() => {}).finally(() => { wakePending = false; });
+}
+export function toggle_fullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen?.().catch(() => {});
+}
 export function now() { return performance.now(); }
 export function local_get(key) { try { return localStorage.getItem(key) || ""; } catch { return ""; } }
 export function local_set(key, value) { try { if (value) localStorage.setItem(key,value); else localStorage.removeItem(key); } catch {} }

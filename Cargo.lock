@@ -2600,6 +2600,7 @@ dependencies = [
  "axum",
  "futures-util",
  "http-body-util",
+ "libloading",
  "local-ip-address",
  "rand 0.9.5",
  "redb",

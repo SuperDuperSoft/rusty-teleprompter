@@ -147,3 +147,32 @@ html:has(.phone-home),html:has(.prompter),body:has(.phone-home),body:has(.prompt
 .lost-hint .ghost-button{min-height:44px;padding:8px 14px;font-size:15px}
 .prompter .spoken-word.hint-word{text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:4px}
 .remote-toast{position:absolute;left:50%;top:24px;transform:translateX(-50%);z-index:6;background:var(--surface2);color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:12px 28px;font-size:clamp(28px,6vw,44px);font-weight:650;white-space:nowrap;max-width:calc(100% - 32px);overflow:hidden;text-overflow:ellipsis;pointer-events:none;box-shadow:0 6px 20px #0008}
+.voice-status{display:flex;align-items:center;gap:7px;color:#bac6b3;font-size:11px;line-height:1.5;margin:-8px 0 18px}
+.local-dot.wait{background:#e6c069}
+.list-heading .list-count{margin-left:8px;margin-right:auto}
+.ghost-button.small{min-height:40px;padding:6px 14px;font-size:15px;border-radius:10px}
+.script-row-wrap{display:flex;align-items:stretch;gap:8px}
+.script-row-wrap .script-row{flex:1;min-width:0}
+.edit-button{width:56px;min-width:56px;height:auto;border-radius:14px;font-size:20px}
+.phone-edit{padding-bottom:40px}
+.phone-edit .phone-bar button.primary{min-height:44px;padding:8px 18px}
+.edit-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.edit-heading strong{font-size:18px;font-weight:650}
+.edit-heading small{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slide-chips{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 10px;scrollbar-width:thin}
+.slide-chip{display:flex;align-items:center;gap:8px;flex-shrink:0;max-width:220px;min-height:44px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--text);padding:8px 14px;font-size:15px}
+.slide-chip b{color:var(--muted);font-weight:650}
+.slide-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slide-chip.active{border-color:var(--accent);background:var(--surface2);box-shadow:0 0 0 2px #e2925f33}
+.slide-chip.active b{color:var(--accent)}
+.slide-chip.add{color:var(--accent);border-style:dashed}
+.slide-editor{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.edit-slide-title,.edit-slide-text{display:block;width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--text);padding:12px 14px}
+.edit-slide-title{min-height:50px;font-size:17px;font-weight:600}
+.edit-slide-text{min-height:42dvh;font-size:18px;line-height:1.6;resize:vertical}
+.edit-slide-title:focus,.edit-slide-text:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px #e2925f33}
+.edit-meta{color:var(--muted);font-size:13px;margin:0 2px}
+.edit-actions{display:flex;flex-wrap:wrap;gap:8px}
+.edit-actions .ghost-button{flex:1 1 auto;min-width:56px}
+.phone-home .danger{color:#f19a85!important;border-color:#6b3a30}
+.delete-script{margin-top:28px}

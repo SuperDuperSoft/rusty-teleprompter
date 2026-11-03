@@ -14,6 +14,25 @@ fn arg(name: &str) -> Option<String> {
 
 #[tokio::main]
 async fn main() {
+    if let Some(wav) = arg("--voice-test") {
+        // 16-bit mono 16 kHz WAV: skip the 44-byte header.
+        let bytes = std::fs::read(&wav).unwrap_or_default();
+        let samples: Vec<i16> = bytes
+            .get(44..)
+            .unwrap_or_default()
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        let folder = arg("--voice")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| web_folder().parent().unwrap().join("voice"));
+        let json = match rusty_companion::voice::transcribe(&folder, &samples) {
+            Ok(text) => serde_json::json!({"ok":true,"text":text}),
+            Err(e) => serde_json::json!({"ok":false,"error":e}),
+        };
+        let _ = std::fs::write(arg("--report").unwrap_or("voice-test.json".into()), json.to_string());
+        return;
+    }
     if let Some(report) = arg("--self-test") {
         let result = smoke().await;
         let json = match result {
@@ -54,7 +73,11 @@ async fn run() -> anyhow::Result<()> {
         PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_else(|| ".".into()))
             .join("RustyPrompter")
     });
-    let state = AppState::new(&folder, web_folder(), port)?;
+    let web = web_folder();
+    let voice = arg("--voice")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| web.parent().unwrap().join("voice"));
+    let state = AppState::with_voice(&folder, web, voice, port)?;
     if let Some(file) = arg("--ready-file") {
         std::fs::write(
             file,

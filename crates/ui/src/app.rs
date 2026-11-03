@@ -19,6 +19,9 @@ extern "C" {
     fn download_file(name: &str, text: &str);
     fn follow_word(index: usize, guide: f64, force: bool);
     fn set_remote(prompting: bool, keys_json: &str);
+    fn desktop_voice();
+    fn keep_awake(on: bool);
+    fn toggle_fullscreen();
 }
 thread_local! {
     /// Session time the pump has measured but not yet ticked. Ticks are
@@ -64,6 +67,14 @@ struct Ui {
     flash_until: f64,
     /// Remote-key feedback (text, deadline).
     remote_toast: Option<(String, f64)>,
+    /// The tablet's script editor is open on `selected`.
+    editing: bool,
+    /// Scripts edited on the tablet that the PC has not accepted yet.
+    unsynced: Vec<String>,
+    /// Upload in flight: (script id, `change` when sent, give-up time).
+    push_busy: Option<(String, u64, f64)>,
+    /// No upload starts before this time (backoff after errors).
+    next_push: f64,
 }
 impl Ui {
     fn new() -> Self {
@@ -84,6 +95,10 @@ impl Ui {
         }
         let selected = library.scripts.first().map(|s| s.id.clone()).unwrap_or_default();
         let recovery = serde_json::from_str(&local_get("rusty:draft")).ok();
+        if !native {
+            // Reading on this PC: the companion runs the same offline voice model.
+            desktop_voice();
+        }
         Self {
             tablet: native,
             native,
@@ -124,6 +139,10 @@ impl Ui {
             preview: false,
             flash_until: 0.0,
             remote_toast: None,
+            editing: false,
+            unsynced: serde_json::from_str(&local_get("rusty:unsynced")).unwrap_or_default(),
+            push_busy: None,
+            next_push: 0.0,
         }
     }
     fn script(&self) -> Option<&Script> {
@@ -142,7 +161,7 @@ impl Ui {
         self.last_edit = now();
         self.save_status = "Saving…".into();
         set_dirty(true);
-        if let Some(s) = self.script() {
+        if let Some(s) = self.script().filter(|_| !self.native) {
             local_set("rusty:draft", &serde_json::to_string(s).unwrap());
         }
     }
@@ -268,14 +287,100 @@ impl Ui {
             }
         }
     }
-    fn receive_library(&mut self, library: Library) {
+    fn receive_library(&mut self, mut library: Library) {
+        // Tablet edits the PC has not accepted yet win over the PC's copy
+        // until they upload (a conflict then keeps them as a copy).
+        let kept = self.native && !self.unsynced.is_empty();
+        if kept {
+            for id in &self.unsynced {
+                if let Some(local) = self.library.scripts.iter().find(|s| &s.id == id) {
+                    match library.scripts.iter_mut().find(|s| &s.id == id) {
+                        Some(remote) => *remote = local.clone(),
+                        None => library.scripts.push(local.clone()),
+                    }
+                }
+            }
+        }
         if let Some(s) = &self.session {
             let newest = library.scripts.iter().find(|v| v.id == s.script.id);
             self.removed = newest.is_none();
             self.pending = newest.filter(|v| v.revision != s.script.revision).cloned();
         }
         self.library = library;
+        if kept {
+            self.store_library();
+        }
+        if self.editing && self.script().is_none() {
+            self.editing = false;
+        }
         self.apply_pending();
+    }
+    /// The tablet has been paired with a PC (it may be offline right now).
+    fn paired(&self) -> bool {
+        !self.connection.starts_with("Not paired")
+    }
+    fn save_unsynced(&self) {
+        local_set("rusty:unsynced", &serde_json::to_string(&self.unsynced).unwrap());
+    }
+    /// Writes the tablet's library to its offline cache.
+    fn store_library(&self) {
+        native_call(
+            "save_library",
+            &json!({ "generation" : self.library.generation, "scripts" : self.library.scripts })
+                .to_string(),
+        );
+    }
+    /// The PC changed a script the tablet also edited: keep the tablet's
+    /// version as a new script and take the PC's version of the original.
+    fn fork_conflict(&mut self, id: &str) {
+        let Some(mut copy) = self.library.scripts.iter().find(|s| s.id == id).cloned() else {
+            return;
+        };
+        copy.id = uuid();
+        copy.revision = 0;
+        copy.title = format!("{} (tablet copy)", copy.title.chars().take(180).collect::<String>());
+        for slide in &mut copy.slides {
+            slide.id = uuid();
+        }
+        self.unsynced.retain(|x| x != id);
+        self.unsynced.push(copy.id.clone());
+        if self.selected == id {
+            self.selected = copy.id.clone();
+        }
+        self.library.scripts.push(copy);
+        self.message =
+            "This script also changed on the PC. Your tablet edits were saved as a copy.".into();
+        self.save_unsynced();
+        self.store_library();
+        native_call("refresh", "");
+    }
+    /// Deletes the selected script from the tablet, and from the PC when it syncs there.
+    fn delete_tablet_script(&mut self) {
+        self.confirm = None;
+        let Some(script) = self.script().cloned() else { return };
+        if self.push_busy.as_ref().is_some_and(|p| p.0 == script.id) {
+            self.message = "This script is syncing. Try again in a moment.".into();
+        } else if !self.paired() || script.revision == 0 {
+            self.remove_local(&script.id);
+        } else if self.connection.starts_with("Connected") {
+            native_call(
+                "delete",
+                &json!({ "id" : script.id, "revision" : script.revision }).to_string(),
+            );
+        } else {
+            self.message = "Connect to the PC to delete a script that syncs with it.".into();
+        }
+    }
+    fn remove_local(&mut self, id: &str) {
+        self.library.scripts.retain(|s| s.id != id);
+        self.unsynced.retain(|x| x != id);
+        if self.selected == id {
+            self.selected = self.library.scripts.first().map(|s| s.id.clone()).unwrap_or_default();
+            self.selected_slide = 0;
+            self.editing = false;
+        }
+        self.save_unsynced();
+        self.store_library();
     }
     fn voice_blocked(&self, action: &str) -> bool {
         matches!(action, "toggle" | "forward" | "play")
@@ -576,6 +681,33 @@ fn handle_event(ui: &mut Ui, event: &Value) {
                 .unwrap_or("Microphone unavailable")
                 .into();
         }
+        "push_ok" => {
+            let id = event["id"].as_str().unwrap_or("");
+            let sent = ui.push_busy.take().filter(|p| p.0 == id).map(|p| p.1);
+            if let Some(s) = ui.library.scripts.iter_mut().find(|s| s.id == id) {
+                s.revision = event["revision"].as_u64().unwrap_or(s.revision);
+            }
+            // Edits made while uploading go up next time, at the new revision.
+            if sent == Some(ui.change) && !ui.dirty {
+                ui.unsynced.retain(|x| x != id);
+            }
+            ui.save_unsynced();
+            ui.store_library();
+        }
+        "push_error" => {
+            let id = event["id"].as_str().unwrap_or("").to_string();
+            ui.push_busy = None;
+            ui.next_push = now() + 8000.0;
+            if event["status"].as_u64() == Some(409) {
+                ui.fork_conflict(&id);
+            } else {
+                ui.message = event["message"].as_str().unwrap_or("Could not sync with the PC.").into();
+            }
+        }
+        "delete_ok" => {
+            let id = event["id"].as_str().unwrap_or("").to_string();
+            ui.remove_local(&id);
+        }
         "pause" => ui.action("pause"),
         "error" | "grammar_error" =>ui.message = event["message"].as_str().unwrap_or("").into(),
         "import" => {
@@ -695,7 +827,7 @@ async fn pump(mut state: Signal<Ui>) {
             let ui = state.peek();
             ui.session
                 .as_ref()
-                .filter(|_| ui.native && ui.settings.script_grammar)
+                .filter(|_| ui.settings.script_grammar)
                 .map(|s| (s.script.id.clone(), s.script.revision))
         };
         if grammar_seen.as_ref() != Some(&candidate) {
@@ -716,8 +848,11 @@ async fn pump(mut state: Signal<Ui>) {
             }
             grammar_seen = Some(candidate);
         }
-        let desired = state.peek().native && state.peek().voice_ready
+        let desired = state.peek().voice_ready
             && state.peek().session.as_ref().is_some_and(|s| s.phase.mic_open());
+        if !state.peek().native {
+            keep_awake(state.peek().prompting());
+        }
         // The voice tag changes with each take and when a pre-roll ends, so
         // the reset sent then also drops speech still in flight from "3-2-1".
         let take_key = state
@@ -785,6 +920,45 @@ async fn pump(mut state: Signal<Ui>) {
                     &json!({ "phase" : "Library", "script" : "", "pending" : false })
                         .to_string(),
                 );
+            }
+        }
+        if state.peek().native {
+            // Tablet edits: save to the offline cache, then upload to the PC.
+            let save = {
+                let ui = state.peek();
+                ui.dirty && time - ui.last_edit >= 400.0
+            };
+            if save {
+                let mut ui = state.write();
+                let id = ui.selected.clone();
+                if !ui.unsynced.contains(&id) {
+                    ui.unsynced.push(id);
+                }
+                ui.dirty = false;
+                set_dirty(false);
+                ui.save_unsynced();
+                ui.store_library();
+            }
+            let push = {
+                let ui = state.peek();
+                let idle = ui.push_busy.as_ref().is_none_or(|p| time >= p.2);
+                (ui.connection.starts_with("Connected") && idle && !ui.dirty && time >= ui.next_push)
+                    .then(|| ui.unsynced.first().cloned())
+                    .flatten()
+            };
+            if let Some(id) = push {
+                let mut ui = state.write();
+                match ui.library.scripts.iter().find(|s| s.id == id).cloned() {
+                    Some(script) => {
+                        ui.push_busy = Some((id, ui.change, time + 15000.0));
+                        ui.next_push = time + 500.0;
+                        native_call("push", &serde_json::to_string(&script).unwrap());
+                    }
+                    None => {
+                        ui.unsynced.retain(|x| x != &id);
+                        ui.save_unsynced();
+                    }
+                }
             }
         }
         if !state.peek().native && !state.peek().tablet {
@@ -980,6 +1154,10 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                         "ALL YOURS. ALWAYS."
                     }
                     p { "Local scripts. Offline voice following. Zero subscriptions." }
+                    div { class: "voice-status",
+                        span { class: if ui.voice_ready { "local-dot" } else { "local-dot wait" } }
+                        "{ui.voice_status}"
+                    }
                     button {
                         class: "sidebar-help",
                         onclick: move |_| state.write().help = true,
@@ -1127,7 +1305,7 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                                         u.preview = true;
                                     }
                                 },
-                                "Preview ↗"
+                                "Read on this PC ↗"
                             }
                         }
                     }
@@ -1306,6 +1484,11 @@ fn TabletApp(mut state: Signal<Ui>) -> Element {
             Prompter { state }
         };
     }
+    if ui.editing && ui.native && ui.script().is_some() {
+        return rsx! {
+            TabletEditor { state }
+        };
+    }
     let paired = ui.connection.starts_with("Connected");
     let count = ui.library.scripts.len();
     rsx! {
@@ -1358,12 +1541,24 @@ fn TabletApp(mut state: Signal<Ui>) -> Element {
             }
             div { class: "list-heading",
                 h1 { "Scripts" }
-                span { "{count}" }
+                span { class: "list-count", "{count}" }
+                if ui.native {
+                    button {
+                        class: "ghost-button small",
+                        onclick: move |_| {
+                            let mut u = state.write();
+                            u.new_script(false);
+                            u.editing = true;
+                        },
+                        "+ New"
+                    }
+                }
             }
             div { class: "script-list",
                 {
                     ui.library
                         .scripts
+                        .clone()
                         .into_iter()
                         .map(|script| {
                             let id = script.id.clone();
@@ -1374,16 +1569,31 @@ fn TabletApp(mut state: Signal<Ui>) -> Element {
                                 .sum();
                             let slides = script.slides.len();
                             let minutes = script_estimate_ms(&script, &ui.settings).div_ceil(60000).max(1);
+                            let edit_id = script.id.clone();
+                            let unsynced = if ui.paired() && ui.unsynced.contains(&script.id) { " · not synced yet" } else { "" };
                             rsx! {
-                                button {
-                                    class: "script-row",
-                                    key: "{script.id}",
-                                    onclick: move |_| state.write().open(id.clone()),
-                                    div {
-                                        strong { "{script.title}" }
-                                        small { "{slides} slides · {words_total} words · about {minutes} min" }
+                                div { class: "script-row-wrap", key: "{script.id}",
+                                    button {
+                                        class: "script-row",
+                                        onclick: move |_| state.write().open(id.clone()),
+                                        div {
+                                            strong { "{script.title}" }
+                                            small { "{slides} slides · {words_total} words · about {minutes} min{unsynced}" }
+                                        }
+                                        span { class: "chevron", "›" }
                                     }
-                                    span { class: "chevron", "›" }
+                                    if ui.native {
+                                        button {
+                                            class: "round-button edit-button",
+                                            aria_label: "Edit {script.title}",
+                                            onclick: move |_| {
+                                                let mut u = state.write();
+                                                u.select(edit_id.clone());
+                                                u.editing = u.selected == edit_id;
+                                            },
+                                            "✎"
+                                        }
+                                    }
                                 }
                             }
                         })
@@ -1391,9 +1601,210 @@ fn TabletApp(mut state: Signal<Ui>) -> Element {
                 if count == 0 {
                     div { class: "empty-state",
                         strong { "No scripts yet" }
-                        p { "Write a script in the PC studio, then connect this phone. It will show up here." }
+                        p { "Tap + New to write one here, or write in the PC studio and connect this tablet." }
                     }
                 }
+            }
+        }
+    }
+}
+/// Script and slide editing on the tablet. Edits save to the tablet at once
+/// and upload to the PC when connected (see the tablet branch of `pump`).
+#[component]
+fn TabletEditor(mut state: Signal<Ui>) -> Element {
+    let ui = state.read().clone();
+    let Some(script) = ui.script().cloned() else {
+        return rsx! {};
+    };
+    let index = ui.selected_slide.min(script.slides.len().saturating_sub(1));
+    let slide = script.slides.get(index).cloned();
+    let count = slide.as_ref().map(|s| words(&s.text).len()).unwrap_or(0);
+    let duration = slide
+        .as_ref()
+        .map(|s| format_duration(slide_estimate_ms(s, ui.settings.speaking_wpm)))
+        .unwrap_or_default();
+    let total = script.slides.len();
+    let waiting = ui.paired() && ui.unsynced.contains(&script.id);
+    let sync = if ui.dirty {
+        "Saving…"
+    } else if !ui.paired() {
+        "Saved on this tablet"
+    } else if !waiting {
+        "Synced with PC"
+    } else if ui.connection.starts_with("Connected") {
+        "Syncing to PC…"
+    } else {
+        "Saved on this tablet · syncs when the PC is online"
+    };
+    let read_id = script.id.clone();
+    rsx! {
+        main { class: "phone-home phone-edit",
+            header { class: "phone-bar",
+                button {
+                    class: "round-button",
+                    aria_label: "Back to scripts",
+                    onclick: move |_| state.write().editing = false,
+                    "‹"
+                }
+                div { class: "edit-heading",
+                    strong { "Edit script" }
+                    small {
+                        span { class: if ui.dirty || waiting { "dot wait" } else { "dot ok" } }
+                        "{sync}"
+                    }
+                }
+                button {
+                    class: "primary",
+                    disabled: total == 0,
+                    onclick: move |_| {
+                        let mut u = state.write();
+                        u.editing = false;
+                        u.open(read_id.clone());
+                    },
+                    "Read ›"
+                }
+            }
+            if !ui.message.is_empty() {
+                div { class: "message", role: "alert",
+                    span { "{ui.message}" }
+                    button {
+                        aria_label: "Dismiss",
+                        onclick: move |_| state.write().message.clear(),
+                        "×"
+                    }
+                }
+            }
+            label { class: "field",
+                span { "Script title" }
+                input {
+                    aria_label: "Script title",
+                    maxlength: 200,
+                    value: "{script.title}",
+                    oninput: move |e| {
+                        let value = e.value();
+                        state
+                            .write()
+                            .edit(|s| {
+                                s.title = if value.trim().is_empty() {
+                                    "Untitled script".into()
+                                } else {
+                                    value
+                                };
+                            });
+                    },
+                }
+            }
+            div { class: "list-heading",
+                h1 { "Slides" }
+                span { class: "list-count", "{total}" }
+            }
+            div { class: "slide-chips", aria_label: "Slides",
+                {
+                    script
+                        .slides
+                        .iter()
+                        .enumerate()
+                        .map(|(i, sl)| {
+                            let active = i == index;
+                            let label = if sl.title.trim().is_empty() {
+                                format!("Slide {}", i + 1)
+                            } else {
+                                sl.title.clone()
+                            };
+                            rsx! {
+                                button {
+                                    key: "{sl.id}",
+                                    class: if active { "slide-chip active" } else { "slide-chip" },
+                                    aria_pressed: "{active}",
+                                    onclick: move |_| state.write().selected_slide = i,
+                                    b { "{i + 1}" }
+                                    span { "{label}" }
+                                }
+                            }
+                        })
+                }
+                button {
+                    class: "slide-chip add",
+                    onclick: move |_| state.write().add_slide(),
+                    "+ Slide"
+                }
+            }
+            if let Some(slide) = slide {
+                section { class: "slide-editor",
+                    input {
+                        class: "edit-slide-title",
+                        aria_label: "Slide title",
+                        maxlength: 200,
+                        placeholder: "Slide title",
+                        value: "{slide.title}",
+                        oninput: move |e| {
+                            let value = e.value();
+                            state
+                                .write()
+                                .edit(|s| {
+                                    if let Some(sl) = s.slides.get_mut(index) {
+                                        sl.title = value;
+                                    }
+                                });
+                        },
+                    }
+                    textarea {
+                        class: "edit-slide-text",
+                        aria_label: "Slide script",
+                        maxlength: 100000,
+                        placeholder: "Type what you want to say…",
+                        value: "{slide.text}",
+                        oninput: move |e| {
+                            let value = e.value();
+                            state
+                                .write()
+                                .edit(|s| {
+                                    if let Some(sl) = s.slides.get_mut(index) {
+                                        sl.text = value;
+                                    }
+                                });
+                        },
+                    }
+                    p { class: "edit-meta",
+                        "{count} words · ~{duration} · [Directions in brackets aren’t read aloud]"
+                    }
+                    div { class: "edit-actions",
+                        button {
+                            class: "ghost-button",
+                            aria_label: "Move slide up",
+                            disabled: index == 0,
+                            onclick: move |_| state.write().move_slide(-1),
+                            "↑"
+                        }
+                        button {
+                            class: "ghost-button",
+                            aria_label: "Move slide down",
+                            disabled: index + 1 >= total,
+                            onclick: move |_| state.write().move_slide(1),
+                            "↓"
+                        }
+                        button {
+                            class: "ghost-button",
+                            onclick: move |_| state.write().duplicate_slide(),
+                            "Duplicate"
+                        }
+                        button {
+                            class: "ghost-button danger",
+                            onclick: move |_| state.write().confirm = Some("slide".into()),
+                            "Delete slide"
+                        }
+                    }
+                }
+            } else {
+                div { class: "empty-state",
+                    strong { "No slides yet" }
+                    p { "Tap + Slide to start writing." }
+                }
+            }
+            button {
+                class: "ghost-button wide danger delete-script",
+                onclick: move |_| state.write().confirm = Some("script".into()),
+                "Delete script"
             }
         }
     }
@@ -1476,8 +1887,8 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
             format_duration(session.time_left_ms())
         )
     };
-    let status = if ui.preview {
-        "Preview · use Next to change slides"
+    let status = if ui.preview && !ui.voice_ready {
+        "Voice off · use Next to change slides"
     } else if session.phase == Phase::Reading {
         "Listening"
     } else if session.phase == Phase::Rolling {
@@ -1515,6 +1926,15 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                     small {
                         span { class: dot, role: "img", aria_label: dot_label }
                         "{status} · Slide {number}/{total}{times}"
+                    }
+                }
+                if !ui.native {
+                    button {
+                        class: "round-button",
+                        aria_label: "Full screen",
+                        title: "Full screen (F11)",
+                        onclick: move |_| toggle_fullscreen(),
+                        "⛶"
                     }
                 }
                 button {
@@ -1860,6 +2280,12 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         }
                         li { "Choose a script and tap Start. Your voice sets the pace." }
                     }
+                    if !ui.native {
+                    p {
+                        strong { "No tablet? " }
+                        "Read on this PC follows your voice with the PC’s microphone, using the same offline voice model. Press F11 or ⛶ for full screen. If nothing is heard, allow desktop apps to use the microphone in Windows Settings › Privacy & security › Microphone."
+                    }
+                    }
                     div { class: "help-note",
                         strong { "A little room to be yourself." }
                         p {
@@ -2034,6 +2460,7 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         max: 60.0,
                         step: 1.0,
                     }
+                    if ui.native {
                     div { class: "setting-group",
                         span { class: "setting-name", "Screen rotation" }
                         div { class: "segmented", role: "radiogroup",
@@ -2059,6 +2486,7 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                                     })
                             }
                         }
+                    }
                     }
                     div { class: "setting-group switches",
                         SettingSwitch { state, label: "Show reading line", field: "guide", on: ui.settings.show_guide }
@@ -2118,8 +2546,8 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         SettingSwitch { state, label: "Follow re-reading", field: "voice_resync", on: ui.settings.voice_resync }
                         if ui.native {
                             SettingSwitch { state, label: "Volume keys as remote", field: "volume_keys", on: ui.settings.volume_keys }
-                            SettingSwitch { state, label: "Script vocabulary (beta)", field: "script_grammar", on: ui.settings.script_grammar }
                         }
+                        SettingSwitch { state, label: "Script vocabulary (beta)", field: "script_grammar", on: ui.settings.script_grammar }
                     }
                     if ui.session.is_some() {
                         button {
@@ -2175,6 +2603,10 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                             class: "primary destructive",
                             onclick: move |_| {
                                 let action = kind.clone();
+                                if action == "script" && state.read().native {
+                                    state.write().delete_tablet_script();
+                                    return;
+                                }
                                 spawn(async move {
                                     if action == "slide" {
                                         let mut u = state.write();
