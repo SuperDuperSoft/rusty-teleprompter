@@ -190,3 +190,23 @@ fn position_saved_with_old_scheme_is_not_restored() {
     let back: Position = serde_json::from_str(&json).unwrap();
     assert_eq!(back.words_scheme, WORDS_SCHEME);
 }
+#[test]
+fn ordinal_suffix_is_ascii_only() {
+    // U+017F (long s) case-folds to "s"; it must not count as "st".
+    assert_eq!(said("1ſt"), "1ſt");
+    assert_eq!(said("1ST"), "first");
+    assert_eq!(said("2Nd"), "second");
+    assert_eq!(said("1K"), "1k");
+}
+#[test]
+fn decimal_dollars_are_not_cents() {
+    assert_eq!(said("$2.5 million"), "two point five dollars million");
+    assert_eq!(said("$1,000.5"), "one thousand point five dollars");
+    assert_eq!(said("$2.505"), "two point five zero five dollars");
+    assert_eq!(said("$2.50"), "two dollars fifty cents");
+    assert_eq!(said("It cost $2. Then"), "it cost two dollars then");
+    assert_eq!(spans("$2.5 million"), ["", "", "", "$2.5", "million"]);
+    let text = "We raised $2.5 million this year";
+    let w = words(text);
+    assert_eq!(sentence_starts(text, &w), [0]);
+}

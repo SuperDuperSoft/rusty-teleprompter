@@ -458,11 +458,18 @@ impl Tracker {
         let all_common = self.words[len.saturating_sub(3)..]
             .iter()
             .all(|w| is_common(&w.text));
+        // (c) Just the common words after the last content word, said fresh
+        // right up to the end: the last content word was heard recently, or
+        // only common script words lie between it and the end.
         let tail = cell.fresh_first == pos + 1
             && cell.fresh as isize == end - pos
-            && cell
-                .last_content
-                .is_some_and(|c| (pos - 3..=pos).contains(&c));
+            && cell.last_content.is_some_and(|c| {
+                c <= pos
+                    && ((pos - 3..=pos).contains(&c)
+                        || self.words[(c + 1) as usize..=end as usize]
+                            .iter()
+                            .all(|w| is_common(&w.text)))
+            });
         let heard = cell.fresh_content >= 1 || (all_common && cell.fresh >= 2.min(len)) || tail;
         heard && (end - pos <= 12 || is_final)
     }
@@ -514,6 +521,7 @@ impl Tracker {
                     run.matches += 1;
                     run.content += usize::from(!common);
                     run.last = here;
+                    run.last_row = i;
                 }
                 runs[i][j] = run;
             }
@@ -538,6 +546,10 @@ impl Tracker {
                 || r.matches * 4 < (r.last - r.start + 1) * 3
                 || r.matches * 5 < rows * 3
                 || r.start_row > 3
+                // The newest words must be the re-read ones: a copy matched
+                // earlier in the utterance and then left behind is the
+                // reader moving on, not going back.
+                || r.last_row + 1 < rows
                 || value < here + 3.0
             {
                 continue;
@@ -565,7 +577,7 @@ struct Back {
     matches: usize,
 }
 /// A run of the backward alignment; `last` is the script index of its latest
-/// match.
+/// match and `last_row` the heard row of that match.
 #[derive(Clone, Copy, Default)]
 struct Run {
     start: usize,
@@ -573,6 +585,7 @@ struct Run {
     matches: usize,
     content: usize,
     last: usize,
+    last_row: usize,
 }
 /// The best forward match of one `accept` call.
 struct Candidate {
@@ -785,6 +798,8 @@ pub struct Session {
     pub voice_resync: bool,
     resume: Phase,
     last_heard: String,
+    /// Length of the current pre-roll, fixed when it started.
+    roll_len: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Position {
@@ -830,6 +845,7 @@ impl Session {
             voice_resync: true,
             resume: Phase::Reading,
             last_heard: String::new(),
+            roll_len: 0,
         }
     }
     fn new_tracker(text: &str, allow_back: bool) -> Tracker {
@@ -909,6 +925,7 @@ impl Session {
         }
         self.phase = Phase::Rolling;
         self.roll_ms = self.pre_roll_ms;
+        self.roll_len = self.pre_roll_ms;
         self.resume = Phase::Reading;
         self.tracker.reset_utterance();
     }
@@ -945,7 +962,7 @@ impl Session {
                 self.start();
             }
             Phase::Paused => self.start(),
-            Phase::Rolling if self.pre_roll_ms.saturating_sub(self.roll_ms) >= ROLL_GUARD_MS => {
+            Phase::Rolling if self.roll_len.saturating_sub(self.roll_ms) >= ROLL_GUARD_MS => {
                 self.skip_roll()
             }
             Phase::Rolling => {}
@@ -1127,6 +1144,7 @@ impl Session {
         } else {
             self.phase = Phase::Finished;
             self.remaining_ms = self.countdown_ms;
+            self.roll_ms = 0;
         }
     }
     pub fn previous(&mut self) {
@@ -1310,6 +1328,7 @@ impl Session {
             self.tracker = Self::new_tracker(&self.script.slides[i].text, self.voice_resync);
             self.tracker.seek(saved.next_word);
             self.phase = Phase::Ready;
+            self.roll_ms = 0;
             self.clear_heard();
         }
     }

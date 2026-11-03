@@ -239,16 +239,17 @@ fn unit(out: &mut Vec<Word>, words: Vec<String>, start: usize, end: usize) {
 /// Tries the numeric token forms at byte `s` of `text`; on success pushes the
 /// words and returns the end of the consumed span.
 pub(crate) fn numeric(text: &str, s: usize, out: &mut Vec<Word>) -> Option<usize> {
-    static FORMS: OnceLock<[Regex; 8]> = OnceLock::new();
+    static FORMS: OnceLock<[Regex; 9]> = OnceLock::new();
     let forms = FORMS.get_or_init(|| {
         [
             r"^[0-9]{1,3}:[0-9]{1,3}(?:[-–][0-9]{1,3}(?::[0-9]{1,3})?)?",
             r"^\$[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{2})?",
             r"^\$[0-9]+(?:\.[0-9]{2})?",
+            r"^\$(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\.[0-9]+",
             r"^[0-9]+(?:\.[0-9]+)?%",
             r"^[0-9]{1,3}(?:,[0-9]{3})+",
             r"^[0-9]+\.[0-9]+",
-            r"^[0-9]+(?i:st|nd|rd|th)",
+            r"^[0-9]+(?i-u:st|nd|rd|th)",
             r"^[0-9]+",
         ]
         .map(|p| Regex::new(p).unwrap())
@@ -256,6 +257,11 @@ pub(crate) fn numeric(text: &str, s: usize, out: &mut Vec<Word>) -> Option<usize
     let rest = &text[s..];
     let (form, m, end) = forms.iter().enumerate().find_map(|(i, re)| {
         let m = re.find(rest)?;
+        // "$2.5", "$1,000.5": not dollars and cents; the longer decimal
+        // money form takes them.
+        if matches!(i, 1 | 2) && forms[3].find(rest).is_some_and(|d| d.end() > m.end()) {
+            return None;
+        }
         Some((i, m.as_str(), applies(rest, m.end())?))
     })?;
     match form {
@@ -299,14 +305,20 @@ pub(crate) fn numeric(text: &str, s: usize, out: &mut Vec<Word>) -> Option<usize
             unit(out, owned(words), s, s + end);
         }
         3 => {
+            let mut words = decimal(&m[1..].replace(',', ""));
+            words.push("dollars");
+            unit(out, owned(words), s, s + end);
+        }
+        4 => {
             let mut words = decimal(&m[..m.len() - 1]);
             words.push("percent");
             unit(out, owned(words), s, s + end);
         }
-        4 => unit(out, owned(spell(&m.replace(',', ""))), s, s + end),
-        5 => unit(out, owned(decimal(m)), s, s + end),
-        6 => {
-            let d = &m[..m.len() - 2];
+        5 => unit(out, owned(spell(&m.replace(',', ""))), s, s + end),
+        6 => unit(out, owned(decimal(m)), s, s + end),
+        7 => {
+            // ASCII digits then a two-letter ASCII suffix.
+            let d = m.trim_end_matches(|c: char| !c.is_ascii_digit());
             let words = match d.parse::<u64>() {
                 Ok(n) if d.len() <= 12 => ordinal(n),
                 _ => owned(digits(d)),

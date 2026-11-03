@@ -469,3 +469,57 @@ fn restart_resets_elapsed() {
     s.retake();
     assert_eq!(s.elapsed_ms, 250);
 }
+#[test]
+fn next_from_roll_on_last_slide_clears_roll() {
+    let mut s = session(3.0, false);
+    s.jump(2);
+    s.start();
+    assert_eq!((s.slide_index, s.phase), (2, Phase::Rolling));
+    s.tick(1000);
+    s.next();
+    assert_eq!((s.phase, s.roll_ms), (Phase::Finished, 0));
+}
+#[test]
+fn restore_during_roll_clears_roll() {
+    let mut s = session(3.0, false);
+    s.start();
+    s.tick(1000);
+    assert_eq!(s.phase, Phase::Rolling);
+    let saved = s.position();
+    s.restore(&saved);
+    assert_eq!((s.phase, s.roll_ms), (Phase::Ready, 0));
+}
+#[test]
+fn roll_guard_uses_elapsed_roll_not_new_setting() {
+    // Lengthened mid-roll: 100 ms in is still inside the guard.
+    let mut s = session(3.0, false);
+    s.start();
+    s.tick(100);
+    s.configure(&Settings {
+        pre_roll_secs: 10.0,
+        ..Settings::default()
+    });
+    s.forward();
+    assert_eq!((s.phase, s.roll_ms), (Phase::Rolling, 2900));
+    // Shortened mid-roll: 1000 ms in is past the guard.
+    let mut s = session(3.0, false);
+    s.start();
+    s.tick(1000);
+    s.configure(&Settings {
+        pre_roll_secs: 1.0,
+        ..Settings::default()
+    });
+    s.forward();
+    assert_eq!((s.phase, s.sync_mark), (Phase::Reading, 1));
+}
+#[test]
+fn resume_paused_roll_after_preroll_turned_off_reads() {
+    let mut s = session(3.0, false);
+    s.start();
+    s.tick(1000);
+    s.pause();
+    assert_eq!((s.phase, s.resume_phase()), (Phase::Paused, Phase::Rolling));
+    s.configure(&Settings::default());
+    s.start();
+    assert_eq!((s.phase, s.roll_ms, s.sync_mark), (Phase::Reading, 0, 0));
+}

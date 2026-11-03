@@ -133,3 +133,23 @@ fn normal_read_still_finishes_with_partials() {
     t.accept("teleprompter for the studio", false);
     assert_eq!(t.position, last(&t));
 }
+#[test]
+fn pause_before_final_common_words_finishes() {
+    // we0 know1 the2 road3 is4 long5 but6 god7 is8 in9 it10 with11 us12
+    let mut t = Tracker::new("We know the road is long but God is in it with us");
+    t.accept("we know the road is long but god is in it with", true);
+    assert_eq!(t.position, Some(11));
+    t.accept("us", true);
+    assert_eq!(t.position, last(&t));
+    assert_eq!(t.last_outcome, Outcome::Advanced);
+}
+#[test]
+fn common_tail_after_skipped_content_word_still_waits() {
+    // The content word "studio" sits between the last heard content word and
+    // the end, so a lone "you" cannot finish.
+    let mut t = Tracker::new("welcome to our bright green and big studio and you");
+    t.accept("welcome to our bright green and big", true);
+    assert_eq!(t.position, Some(6));
+    t.accept("and you", true);
+    assert_ne!(t.position, last(&t));
+}

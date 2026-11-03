@@ -271,3 +271,65 @@ fn forward_reading_after_resync_continues() {
     t.accept("evening lanterns glow softly", true);
     assert_eq!(t.position, Some(29));
 }
+#[test]
+fn reading_repeat_ahead_then_junk_does_not_resync() {
+    let mut t = Tracker::new(TWICE);
+    t.accept(
+        "love is patient and love is kind always we sing together now",
+        true,
+    );
+    assert_eq!(t.position, Some(11));
+    t.accept(&format!("{LOVE} zebra banana"), true);
+    assert!(t.position >= Some(11), "{:?}", t.position);
+    assert_ne!(t.last_outcome, Outcome::Back);
+}
+#[test]
+fn rereading_then_one_junk_word_still_resyncs() {
+    let mut t = read_three();
+    t.accept(&format!("{S1} zebra"), true);
+    assert_eq!(t.position, Some(8));
+    assert_eq!(t.last_outcome, Outcome::Back);
+}
+#[test]
+fn resync_needs_sixty_percent_coverage() {
+    // 7 matches in 11 heard words: 35 >= 33.
+    let mut t = read_three();
+    t.accept(
+        "zebra river zebra flows zebra quietly zebra past old stone mill",
+        true,
+    );
+    assert_eq!(t.position, Some(8));
+    assert_eq!(t.last_outcome, Outcome::Back);
+    // 7 matches in 12 heard words: 35 < 36.
+    let mut t = read_three();
+    t.accept(
+        "zebra river zebra flows zebra quietly zebra past zebra old stone mill",
+        true,
+    );
+    assert_eq!(t.position, Some(25));
+    assert_ne!(t.last_outcome, Outcome::Back);
+}
+#[test]
+fn resync_needs_seventy_five_percent_density() {
+    // 7 of the 9 script words from "farmers" to "autumn": 28 >= 27.
+    let mut t = read_three();
+    t.accept("farmers bring golden wheat distant hills autumn", true);
+    assert_eq!(t.position, Some(17));
+    assert_eq!(t.last_outcome, Outcome::Back);
+    // 5 of 9: 20 < 27.
+    let mut t = read_three();
+    t.accept("farmers golden from hills autumn", true);
+    assert_eq!(t.position, Some(25));
+    assert_ne!(t.last_outcome, Outcome::Back);
+}
+#[test]
+fn idle_accept_clears_back_votes() {
+    let mut t = read_three();
+    t.accept(S1, false);
+    assert_eq!(t.last_outcome, Outcome::Pending);
+    t.accept("", false);
+    assert_eq!(t.last_outcome, Outcome::Idle);
+    t.accept(S1, false);
+    assert_eq!(t.position, Some(25));
+    assert_eq!(t.last_outcome, Outcome::Pending);
+}

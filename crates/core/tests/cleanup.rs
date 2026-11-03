@@ -72,3 +72,14 @@ fn split_hundred_and() {
     let end = t.accept("fifty people today", true);
     assert_eq!(end, last(&t));
 }
+#[test]
+fn trailing_and_without_next_token() {
+    // No "hundred and <number>" on the slide: a trailing "and" is dropped.
+    let mut t = Tracker::new("We fed 100 and more today");
+    t.accept("we fed one hundred and", true);
+    assert_eq!(t.position, Some(3));
+    // The slide says "hundred and fifty": a trailing "and" is kept.
+    let mut t = Tracker::new("We counted one hundred and fifty sheep");
+    t.accept("we counted one hundred and", true);
+    assert_eq!(t.position, Some(4));
+}
