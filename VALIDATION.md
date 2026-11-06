@@ -1,5 +1,22 @@
 # RustyPrompter validation
 
+## Camera recording — November 5, 2026
+
+### Automated checks
+
+- **8 recording-name tests** (core) and **8 recording upload tests** (companion: chunks append in order, out-of-order or repeated chunks refused, old files never appended to, part 0 never overwrites, later parts need part 0, unsafe names/extensions rejected, local editor only, 5 MB chunks accepted) passed, plus the videos-folder path test. All existing core and server tests still pass (287 total). Two independent code reviews (Android; UI/JS/companion) were run and their findings fixed: stale camera session callbacks, texture release, voice surviving the camera permission dialog, one permission dialog at a time, 180° turns, orientation locked while recording, open/close races, stuck REC button, same-second names (Name_2).
+- The UI crate type-checks with the camera controls (checked natively; the wasm build runs in `scripts/build.py`).
+- `MainActivity.kt` compiles with Kotlin 2.1.20 against android-35 with no new warnings.
+- End to end in headless Chromium with a fake camera against the real companion: open, record 3.5 s, stop → saved; record then close while recording → saved and closed. Both files are valid MP4 (1920×1080 + audio). This Chromium has no H.264 encoder and chose VP9-in-MP4; Edge/Chrome pick H.264.
+
+### Required on hardware — NOT yet claimed
+
+- **Galaxy S26:** voice following keeps working while recording (mic shared between VOICE_RECOGNITION and CAMCORDER).
+- Front and back camera, portrait and landscape: preview is upright, fills the screen without stretching, front preview is mirrored, saved video is upright and not mirrored.
+- Switching apps mid-recording saves the video and the camera reopens on return.
+- First-run permission prompts for camera (and microphone) and the "denied" message.
+- PC Edge/Chrome: recording saved to Videos\RustyPrompter as H.264 MP4 and plays in the Windows Media Player app.
+
 ## Releases B and C — November 2, 2026
 
 ### Automated checks

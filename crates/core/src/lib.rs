@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 mod numbers;
 pub use numbers::is_number_word;
 mod remote;
+pub mod recording;
 pub use remote::*;
 
 /// Version of the `words()` indexing scheme stored in saved positions.

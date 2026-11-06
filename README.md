@@ -24,6 +24,7 @@ Write your script on your PC, read it on an Android tablet, and the text follows
 - A slide only finishes when you actually say its last words.
 
 **Made for recording video**
+- **Record yourself** on the phone, tablet or PC: tap 🎥 and the camera shows behind your script, then tap **REC**. The video is just you; the words stay on your screen. Saved to the gallery (Movies/RustyPrompter) on Android, or to Videos\RustyPrompter on the PC.
 - **Retake** restarts the slide in one tap. **Sentence** steps back one sentence.
 - Optional **3-2-1 countdown** before each take, ending in a white **flash** your camera can use to line up audio.
 - At the end of a slide, either count down to the next one (1–15 seconds) or **hold** until you're ready.

@@ -22,6 +22,8 @@ extern "C" {
     fn desktop_voice();
     fn keep_awake(on: bool);
     fn toggle_fullscreen();
+    fn camera(command: &str, payload: &str);
+    fn local_stamp() -> String;
 }
 thread_local! {
     /// Session time the pump has measured but not yet ticked. Ticks are
@@ -29,6 +31,22 @@ thread_local! {
     /// changes; any change to the session first charges this time to the
     /// state that was current while it passed (see Ui::flush_clock).
     static UNTICKED_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+/// The camera behind the prompter. The platform runs it and reports back
+/// with `{"type":"camera"}` events; this only tracks what it said.
+#[derive(Clone, Default)]
+struct Camera {
+    /// The user wants the camera showing.
+    on: bool,
+    /// The preview is live, so recording can start.
+    ready: bool,
+    front: bool,
+    /// `now()` when recording started.
+    recording: Option<f64>,
+    /// Whole seconds recorded, as shown.
+    seconds: u64,
+    /// A record or stop request is waiting for its answer.
+    busy: bool,
 }
 #[derive(Clone)]
 struct Ui {
@@ -75,6 +93,7 @@ struct Ui {
     push_busy: Option<(String, u64, f64)>,
     /// No upload starts before this time (backoff after errors).
     next_push: f64,
+    camera: Camera,
 }
 impl Ui {
     fn new() -> Self {
@@ -143,6 +162,111 @@ impl Ui {
             unsynced: serde_json::from_str(&local_get("rusty:unsynced")).unwrap_or_default(),
             push_busy: None,
             next_push: 0.0,
+            camera: Camera {
+                front: local_get("rusty:camera") != "back",
+                ..Camera::default()
+            },
+        }
+    }
+    fn camera_toggle(&mut self) {
+        if self.camera.on {
+            self.camera_close();
+        } else {
+            self.camera.on = true;
+            self.camera.ready = false;
+            camera("open", &json!({ "front": self.camera.front }).to_string());
+        }
+    }
+    /// Turns the camera off. A recording in progress is stopped and saved.
+    fn camera_close(&mut self) {
+        if self.camera.on {
+            self.camera.on = false;
+            self.camera.ready = false;
+            camera("close", "{}");
+        }
+    }
+    fn camera_flip(&mut self) {
+        if !self.camera.on || self.camera.recording.is_some() || self.camera.busy {
+            return;
+        }
+        self.camera.front = !self.camera.front;
+        self.camera.ready = false;
+        local_set("rusty:camera", if self.camera.front { "" } else { "back" });
+        camera("open", &json!({ "front": self.camera.front }).to_string());
+    }
+    fn camera_record(&mut self) {
+        if !self.camera.ready || self.camera.busy {
+            return;
+        }
+        self.camera.busy = true;
+        if self.camera.recording.is_some() {
+            camera("stop", "{}");
+        } else {
+            let title = self.session.as_ref().map(|s| s.script.title.clone()).unwrap_or_default();
+            let name = recording::file_stem(&title, &local_stamp());
+            camera("record", &json!({ "name": name }).to_string());
+        }
+    }
+    fn camera_event(&mut self, event: &Value) {
+        let cam = &mut self.camera;
+        match event["state"].as_str().unwrap_or("") {
+            "open" => {
+                if !cam.on {
+                    // Turned off while it was opening.
+                    camera("close", "{}");
+                    return;
+                }
+                cam.ready = true;
+                cam.busy = false;
+                cam.front = event["front"].as_bool().unwrap_or(cam.front);
+            }
+            // Always the answer to our own "close"; if the camera was turned
+            // back on since, the "open" that follows makes it ready again.
+            "closed" => {
+                cam.ready = false;
+                cam.recording = None;
+                cam.busy = false;
+            }
+            "recording" => {
+                cam.busy = false;
+                if !cam.on {
+                    camera("stop", "{}");
+                    return;
+                }
+                cam.recording = Some(now());
+                cam.seconds = 0;
+                cam.busy = false;
+            }
+            "saved" => {
+                cam.recording = None;
+                cam.busy = false;
+                let folder = event["folder"].as_str().unwrap_or("");
+                self.message = if folder.is_empty() {
+                    "Video saved".into()
+                } else {
+                    format!("Video saved to {folder}")
+                };
+            }
+            "stopped" => {
+                cam.recording = None;
+                cam.busy = false;
+            }
+            // Android went to the background; it reopens on its own.
+            "paused" => {
+                cam.ready = false;
+                cam.recording = None;
+                cam.busy = false;
+            }
+            "error" => {
+                cam.recording = None;
+                cam.busy = false;
+                if !cam.ready {
+                    // It never opened (permission, no camera, busy): turn it off.
+                    cam.on = false;
+                }
+                self.message = event["message"].as_str().unwrap_or("Camera problem").into();
+            }
+            _ => {}
         }
     }
     fn script(&self) -> Option<&Script> {
@@ -709,6 +833,7 @@ fn handle_event(ui: &mut Ui, event: &Value) {
             ui.remove_local(&id);
         }
         "pause" => ui.action("pause"),
+        "camera" => ui.camera_event(event),
         "error" | "grammar_error" =>ui.message = event["message"].as_str().unwrap_or("").into(),
         "import" => {
             ui.import(
@@ -847,6 +972,14 @@ async fn pump(mut state: Signal<Ui>) {
                     "Script vocabulary is too large; using the full vocabulary.".into();
             }
             grammar_seen = Some(candidate);
+        }
+        // Recording timer, and no camera without an open script.
+        let recorded = state.peek().camera.recording.map(|t| ((time - t).max(0.0) / 1000.0) as u64);
+        if let Some(seconds) = recorded.filter(|s| *s != state.peek().camera.seconds) {
+            state.write().camera.seconds = seconds;
+        }
+        if state.peek().camera.on && state.peek().session.is_none() {
+            state.write().camera_close();
         }
         let desired = state.peek().voice_ready
             && state.peek().session.as_ref().is_some_and(|s| s.phase.mic_open());
@@ -1887,6 +2020,9 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
             format_duration(session.time_left_ms())
         )
     };
+    let cam = ui.camera.clone();
+    let rec_time = format!("{}:{:02}", cam.seconds / 60, cam.seconds % 60);
+    let rec_status = if cam.recording.is_some() { format!("● REC {rec_time} · ") } else { String::new() };
     let status = if ui.preview && !ui.voice_ready {
         "Voice off · use Next to change slides"
     } else if session.phase == Phase::Reading {
@@ -1905,7 +2041,7 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
         "Ready"
     };
     rsx! {
-        main { class: "prompter",
+        main { class: if cam.on { "prompter camera-on" } else { "prompter" },
             header { class: "prompter-bar",
                 button {
                     class: "round-button",
@@ -1925,8 +2061,26 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                     strong { "{session.script.title}" }
                     small {
                         span { class: dot, role: "img", aria_label: dot_label }
-                        "{status} · Slide {number}/{total}{times}"
+                        "{rec_status}{status} · Slide {number}/{total}{times}"
                     }
+                }
+                if cam.on && cam.recording.is_none() {
+                    button {
+                        class: "round-button",
+                        aria_label: "Switch camera",
+                        title: if cam.front { "Use the back camera" } else { "Use the front camera" },
+                        disabled: !cam.ready || cam.busy,
+                        onclick: move |_| state.write().camera_flip(),
+                        "⇄"
+                    }
+                }
+                button {
+                    class: if cam.on { "round-button camera-button on" } else { "round-button camera-button" },
+                    aria_label: if cam.on { "Turn camera off" } else { "Camera" },
+                    aria_pressed: "{cam.on}",
+                    title: if cam.on { "Turn camera off" } else { "Record yourself with the script on top" },
+                    onclick: move |_| state.write().camera_toggle(),
+                    "🎥"
                 }
                 if !ui.native {
                     button {
@@ -2114,6 +2268,18 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                 }
             }
             footer { class: "prompt-controls",
+                if cam.on {
+                    button {
+                        class: if cam.recording.is_some() { "control rec recording" } else { "control rec" },
+                        aria_label: if cam.recording.is_some() { "Stop recording" } else { "Start recording" },
+                        disabled: !cam.ready || cam.busy,
+                        onclick: move |_| state.write().camera_record(),
+                        span { class: "control-icon", span { class: "rec-dot" } }
+                        span { class: "control-label",
+                            if cam.recording.is_some() { "{rec_time}" } else { "REC" }
+                        }
+                    }
+                }
                 button {
                     class: "control",
                     aria_label: "Retake this slide",

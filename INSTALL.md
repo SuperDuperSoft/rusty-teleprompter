@@ -63,6 +63,16 @@ Pair a Bluetooth clicker or pedal that acts as a keyboard with the tablet (or us
 
 A quick repeat of the same action (within 0.4 s of the last one) is ignored, so a bouncy clicker cannot skip slides, and a second Next right after Start does not cancel the pre-roll. After Finished, Next starts the script again from the first slide. Media keys are reliable on the tablet only; desktop browsers usually keep them for the operating system. A large toast confirms each remote action.
 
+### Record yourself
+
+On the reading screen, tap **🎥**. Your camera shows behind the script, with a dark tint so the words stay easy to read. Tap **⇄** to switch between the front and back camera (the app remembers your choice). Tap the red **REC** button to record and tap it again to stop; the button and the status line show the time.
+
+- The saved video is the camera only. The script is never in the video.
+- **Android:** the first time, allow the camera (and microphone). Videos are MP4 in your gallery under **Movies/RustyPrompter**. Switching to another app stops and saves the recording; the camera comes back when you return.
+- **PC (Read on this PC):** your browser asks for the camera and microphone once. Videos are saved by RustyPrompter.exe into your **Videos\RustyPrompter** folder (MP4 in Edge and Chrome; Firefox makes WebM, which some players can't skip through). Video is saved every second, so closing the browser keeps what was recorded.
+- Leaving the reading screen also stops and saves.
+- Voice following keeps working while you record.
+
 ### Reading settings
 
 The Aa settings sheet also has: **Pre-roll (s)** (0 = off, up to 10), **Sync flash**, **Speaking pace (wpm)** for estimates (80–240, default 150), **Lost-place popup** (off by default) and **Hint after (s)** (2–15, default 5), **Follow re-reading** (on by default; moves the highlight back when you re-read earlier text), and on the tablet **Volume keys as remote** (off by default) and **Script vocabulary (beta)** (off by default). Script vocabulary limits recognition to the script's words; it restarts the microphone when switched or when the script changes, and falls back to the full vocabulary with a message for very large scripts or if the model cannot build it. Older saved settings load with these defaults.

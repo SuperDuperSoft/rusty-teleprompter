@@ -176,3 +176,23 @@ html:has(.phone-home),html:has(.prompter),body:has(.phone-home),body:has(.prompt
 .edit-actions .ghost-button{flex:1 1 auto;min-width:56px}
 .phone-home .danger{color:#f19a85!important;border-color:#6b3a30}
 .delete-script{margin-top:28px}
+/* Camera: live video behind the script. PC draws #rusty-camera; Android draws a native view behind the transparent WebView. */
+html:has(.camera-on),body:has(.camera-on){background:transparent!important;color-scheme:light}
+#rusty-camera{position:fixed;inset:0;width:100vw;height:100dvh;object-fit:cover;z-index:0;background:#000;pointer-events:none}
+#rusty-camera.mirror{transform:scaleX(-1)}
+.prompter.camera-on{background:transparent;position:relative;z-index:1}
+.prompter.camera-on .prompt-mirror{background:linear-gradient(#000000a6,#00000073 35%,#00000073 65%,#000000a6)}
+.prompter.camera-on .prompter-bar,.prompter.camera-on .prompt-controls{background:#0f1615bf;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.prompter.camera-on .prompt-text,.prompter.camera-on .spoken-word{text-shadow:0 1px 2px #000,0 0 10px #000c}
+.prompter.camera-on .spoken-word.read-word{color:#b9c2bb}
+.prompter.camera-on .reading-guide{background:#e2925f26}
+.camera-button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.prompter-bar .camera-button{font-size:19px}
+.prompt-controls .rec .rec-dot{display:inline-block;width:16px;height:16px;border-radius:50%;background:#e5484d;box-shadow:0 0 0 3px #e5484d33}
+.prompt-controls .rec.recording{color:#ffb4b4}
+.prompt-controls .rec.recording .rec-dot{border-radius:3px;animation:rec-blink 1s steps(2,start) infinite}
+.prompt-controls .rec .control-label{font-variant-numeric:tabular-nums}
+@keyframes rec-blink{to{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.prompt-controls .rec.recording .rec-dot{animation:none}}
+/* Landscape phones hide labels; keep the recording timer visible. */
+@media (max-height:520px){.prompt-controls .rec.recording .control-label{display:block;color:#ffb4b4}}

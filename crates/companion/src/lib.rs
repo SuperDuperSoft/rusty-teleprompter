@@ -22,11 +22,14 @@ use std::{
     time::Instant,
 };
 use subtle::ConstantTimeEq;
+pub mod paths;
 pub mod voice;
 use voice::Voice;
 
 const DATA: TableDefinition<&str, &str> = TableDefinition::new("library");
 const DEVICES: TableDefinition<&str, bool> = TableDefinition::new("devices");
+/// Largest single recording chunk the browser may upload.
+pub const RECORDING_CHUNK_LIMIT: usize = 32_000_000;
 
 pub struct Store {
     db: Database,
@@ -215,6 +218,10 @@ pub struct AppState {
     pub port: u16,
     /// Offline voice for reading on this PC.
     pub voice: Arc<Voice>,
+    /// Camera recordings made while reading on this PC go here.
+    pub recordings: PathBuf,
+    /// Next chunk number each in-progress recording expects.
+    recording_parts: Mutex<HashMap<PathBuf, u32>>,
 }
 impl AppState {
     /// Voice files are looked for in a `voice` folder next to `web`.
@@ -239,6 +246,8 @@ impl AppState {
             web,
             port,
             voice: Voice::new(voice),
+            recordings: paths::videos_folder().unwrap_or_else(|_| folder.join("Recordings")),
+            recording_parts: Mutex::new(HashMap::new()),
         }))
     }
     pub fn addresses(&self) -> Vec<String> {
@@ -271,6 +280,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/unpair", post(unpair))
         .route("/api/device/scripts/{id}", put(device_save).delete(device_delete))
         .route("/api/voice", get(voice_socket))
+        // Video arrives in ~1 s chunks; this route alone allows big bodies.
+        .route(
+            "/api/recordings/{stem}",
+            post(save_recording).layer(DefaultBodyLimit::max(RECORDING_CHUNK_LIMIT)),
+        )
         .route("/ws", get(ws))
         .route("/assets/{*path}", get(asset))
         .route("/favicon.ico", get(asset_icon))
@@ -443,6 +457,75 @@ async fn delete_script(
         .ok_or(ApiError(StatusCode::BAD_REQUEST, "Missing revision".into()))?;
     state.store.delete(&id, revision)?;
     Ok(Json(serde_json::json!({"ok":true})))
+}
+/// Saves one chunk of a camera recording made while reading on this PC.
+/// `part=0` creates the file (never overwriting one); later parts append,
+/// so everything recorded so far is on disk even if the browser closes.
+async fn save_recording(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(stem): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    editor(peer, &headers, &state)?;
+    let bad = |text: &str| ApiError(StatusCode::BAD_REQUEST, text.into());
+    if rusty_core::recording::safe_stem(&stem).as_deref() != Some(stem.as_str()) {
+        return Err(bad("Invalid recording name"));
+    }
+    let ext = query.get("ext").map(String::as_str).unwrap_or("");
+    if !matches!(ext, "mp4" | "webm") {
+        return Err(bad("Recordings are saved as mp4 or webm"));
+    }
+    let part: u32 = query
+        .get("part")
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| bad("Missing recording part"))?;
+    let folder = state.recordings.clone();
+    let name = format!("{stem}.{ext}");
+    let file = folder.join(&name);
+    if part > 0 {
+        // Only the next chunk of a recording started by this run, so a retry,
+        // a lost chunk or an old file can never scramble a video.
+        let expected = state.recording_parts.lock().unwrap().get(&file).copied();
+        if expected != Some(part) {
+            return Err(if expected.is_none() && !file.exists() {
+                ApiError(StatusCode::NOT_FOUND, "Recording not started.".into())
+            } else {
+                ApiError(StatusCode::CONFLICT, "Recording chunks arrived out of order.".into())
+            });
+        }
+    }
+    let written = file.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+        use std::io::{ErrorKind, Write};
+        let opened = if part == 0 {
+            std::fs::create_dir_all(&folder).map_err(|_| {
+                ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Could not create the Videos folder.".into())
+            })?;
+            std::fs::OpenOptions::new().write(true).create_new(true).open(&file)
+        } else {
+            std::fs::OpenOptions::new().append(true).open(&file)
+        };
+        let mut handle = opened.map_err(|e| match e.kind() {
+            ErrorKind::AlreadyExists => ApiError(StatusCode::CONFLICT, "A recording with this name already exists.".into()),
+            ErrorKind::NotFound => ApiError(StatusCode::NOT_FOUND, "Recording not started.".into()),
+            _ => ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Could not save the recording.".into()),
+        })?;
+        handle
+            .write_all(&body)
+            .and_then(|_| handle.flush())
+            .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Could not save the recording. Is the disk full?".into()))
+    })
+    .await
+    .map_err(internal)??;
+    state.recording_parts.lock().unwrap().insert(written, part + 1);
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "file": name,
+        "folder": state.recordings.display().to_string(),
+    })))
 }
 /// A paired tablet saves a script it edited. The same revision check as the
 /// editor applies, so a tablet can never overwrite newer PC edits.

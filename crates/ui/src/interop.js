@@ -83,3 +83,109 @@ export function follow_word(index, guide, force) {
     viewport.scrollTo({top:Math.max(0,word.offsetTop - viewport.clientHeight*guide/100),behavior:force?"instant":"smooth"});
   });
 }
+export function local_stamp() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+// Camera. Rust decides when; this runs the camera. Results come back as
+// {type:"camera", state:"open"|"closed"|"recording"|"saved"|"error", ...}.
+// Android runs it natively (Camera2) behind the transparent WebView; a PC
+// browser uses getUserMedia + MediaRecorder and uploads 1 s chunks to the
+// companion, which writes them to the Videos folder as they arrive.
+const camEvent = value => window.__rustyEvents.push({type:"camera", ...value});
+let cam = null; // {stream, video, front, rec}
+export function camera(command, payload) {
+  const value = (() => { try { return JSON.parse(payload || "{}"); } catch { return {}; } })();
+  if (window.RustyNative) { window.RustyNative.command("camera_" + command, JSON.stringify(value)); return; }
+  ({open: camOpen, close: camClose, record: camRecord, stop: camStop}[command] || (() => {}))(value);
+}
+async function camOpen({front = true}) {
+  if (cam?.rec) await camStop();
+  camRelease();
+  if (!navigator.mediaDevices?.getUserMedia) { camEvent({state:"error", message:"This browser can't use a camera. Try Edge or Chrome."}); return; }
+  const want = cam = {front, stream:null, video:null, rec:null};
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {facingMode: front ? "user" : "environment", width: {ideal: 1920}, height: {ideal: 1080}, frameRate: {ideal: 30}},
+      // Raw voice sounds better in a video than call-style processing.
+      audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false},
+    });
+    if (cam !== want) { stream.getTracks().forEach(t => t.stop()); return; }
+    let video = document.getElementById("rusty-camera");
+    if (!video) { video = document.createElement("video"); video.id = "rusty-camera"; video.muted = true; video.playsInline = true; video.autoplay = true; document.body.prepend(video); }
+    video.classList.toggle("mirror", front);
+    video.srcObject = stream;
+    video.play?.().catch(() => {});
+    Object.assign(want, {stream, video});
+    camEvent({state:"open", front});
+  } catch (e) {
+    if (cam !== want) return; // a newer open or a close replaced this one
+    cam = null;
+    const denied = e?.name === "NotAllowedError" || e?.name === "SecurityError";
+    camEvent({state:"error", message: denied ? "Allow camera and microphone access in the browser to record." : e?.name === "NotFoundError" ? "No camera found on this PC." : "Could not open the camera. Close other apps using it and try again."});
+  }
+}
+function camRelease(target = cam) {
+  target?.stream?.getTracks().forEach(t => t.stop());
+  if (target?.video) { target.video.srcObject = null; target.video.remove(); }
+  if (cam === target) cam = null;
+}
+async function camClose() {
+  const mine = cam;
+  if (mine?.rec) await camStop();
+  camRelease(mine); // never the camera a newer open started meanwhile
+  camEvent({state:"closed"});
+}
+function camRecord({name = "RustyPrompter"}) {
+  if (!cam?.stream || cam.rec) { camEvent({state:"stopped"}); return; }
+  const types = ["video/mp4;codecs=avc1.640028,mp4a.40.2", "video/mp4;codecs=avc1,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  const mimeType = types.find(t => window.MediaRecorder?.isTypeSupported?.(t));
+  if (!mimeType) { camEvent({state:"error", message:"This browser can't record video. Try Edge or Chrome."}); return; }
+  const ext = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
+  let recorder;
+  try { recorder = new MediaRecorder(cam.stream, {mimeType, videoBitsPerSecond: 8000000, audioBitsPerSecond: 192000}); }
+  catch { camEvent({state:"error", message:"Could not start recording."}); return; }
+  const rec = cam.rec = {recorder, part: 0, chain: Promise.resolve(), failed: false, folder: "", done: null, name};
+  const url = part => `/api/recordings/${encodeURIComponent(rec.name)}?ext=${ext}&part=${part}`;
+  recorder.ondataavailable = e => {
+    if (!e.data?.size || rec.failed) return;
+    const part = rec.part++;
+    rec.chain = rec.chain.then(async () => {
+      if (rec.failed) return;
+      try {
+        const send = () => fetch(url(part), {method: "POST", body: e.data, headers: {"Content-Type": "application/octet-stream"}});
+        let r = await send();
+        // Same name taken (two takes in one second): try Name_2, Name_3, ...
+        for (let n = 2; r.status === 409 && part === 0 && n < 10; n++) { rec.name = `${name}_${n}`; r = await send(); }
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) { const err = new Error(body.detail || "Could not save the recording."); err.server = true; throw err; }
+        rec.folder = body.folder || rec.folder;
+      } catch (err) {
+        rec.failed = true;
+        if (recorder.state !== "inactive") recorder.stop();
+        camEvent({state:"error", message: (err?.server ? err.message : "Lost the connection to RustyPrompter on this PC.") + (part > 0 ? " What was recorded before this is kept." : "")});
+      }
+    });
+  };
+  rec.done = new Promise(resolve => {
+    recorder.onstop = () => setTimeout(async () => {
+      await rec.chain;
+      if (cam?.rec === rec) cam.rec = null;
+      if (!rec.failed && rec.part > 0) camEvent({state:"saved", folder: rec.folder, file: `${rec.name}.${ext}`});
+      else if (!rec.failed) camEvent({state:"stopped"});
+      resolve();
+    }, 0);
+  });
+  recorder.onerror = () => { if (recorder.state !== "inactive") recorder.stop(); };
+  try { recorder.start(1000); }
+  catch { cam.rec = null; camEvent({state:"error", message:"Could not start recording. Is the camera still connected?"}); return; }
+  camEvent({state:"recording"});
+}
+async function camStop() {
+  const rec = cam?.rec;
+  if (!rec) return;
+  if (rec.recorder.state !== "inactive") rec.recorder.stop();
+  // onstop always follows a started recorder; the timeout only guards a broken one.
+  await Promise.race([rec.done, new Promise(r => setTimeout(r, 15000))]);
+  if (cam?.rec === rec) cam.rec = null;
+}
