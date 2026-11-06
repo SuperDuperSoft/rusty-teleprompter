@@ -841,7 +841,7 @@ impl Session {
             elapsed_ms: 0,
             heard_ago_ms: None,
             stuck_ms: 0,
-            lost_after_ms: 5000,
+            lost_after_ms: 0,
             voice_resync: true,
             resume: Phase::Reading,
             last_heard: String::new(),
@@ -868,7 +868,7 @@ impl Session {
         self.hold_at_end = settings.hold_at_end;
         self.pre_roll_ms = (settings.pre_roll_secs * 1000.0).round() as u64;
         self.wpm = settings.speaking_wpm;
-        self.lost_after_ms = if settings.show_lost_hint {
+        self.lost_after_ms = if settings.lost_hint_popup {
             (settings.lost_place_secs * 1000.0).round() as u64
         } else {
             0
@@ -1358,7 +1358,9 @@ pub struct Settings {
     pub pre_roll_secs: f64,
     pub sync_flash: bool,
     pub speaking_wpm: f64,
-    pub show_lost_hint: bool,
+    /// "Lost your place?" popup while voice tracking. Off by default; renamed
+    /// from show_lost_hint so old saved settings (which had it on) reset to off.
+    pub lost_hint_popup: bool,
     pub lost_place_secs: f64,
     pub voice_resync: bool,
     pub volume_keys: bool,
@@ -1380,7 +1382,7 @@ impl Default for Settings {
             pre_roll_secs: 0.0,
             sync_flash: true,
             speaking_wpm: 150.0,
-            show_lost_hint: true,
+            lost_hint_popup: false,
             lost_place_secs: 5.0,
             voice_resync: true,
             volume_keys: false,

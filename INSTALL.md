@@ -65,7 +65,7 @@ A quick repeat of the same action (within 0.4 s of the last one) is ignored, so 
 
 ### Reading settings
 
-The Aa settings sheet also has: **Pre-roll (s)** (0 = off, up to 10), **Sync flash**, **Speaking pace (wpm)** for estimates (80–240, default 150), **Lost-place hint** and **Hint after (s)** (2–15, default 5), **Follow re-reading** (on by default; moves the highlight back when you re-read earlier text), and on the tablet **Volume keys as remote** (off by default) and **Script vocabulary (beta)** (off by default). Script vocabulary limits recognition to the script's words; it restarts the microphone when switched or when the script changes, and falls back to the full vocabulary with a message for very large scripts or if the model cannot build it. Older saved settings load with these defaults.
+The Aa settings sheet also has: **Pre-roll (s)** (0 = off, up to 10), **Sync flash**, **Speaking pace (wpm)** for estimates (80–240, default 150), **Lost-place popup** (off by default) and **Hint after (s)** (2–15, default 5), **Follow re-reading** (on by default; moves the highlight back when you re-read earlier text), and on the tablet **Volume keys as remote** (off by default) and **Script vocabulary (beta)** (off by default). Script vocabulary limits recognition to the script's words; it restarts the microphone when switched or when the script changes, and falls back to the full vocabulary with a message for very large scripts or if the model cannot build it. Older saved settings load with these defaults.
 
 ### After upgrading from the previous release
 

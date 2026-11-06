@@ -1859,7 +1859,7 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
         current.map(|p| (p + 1) as f64 / parts.len() as f64 * 100.0).unwrap_or(0.0)
     };
     // Lost-place hint: the next words, from word indices so cues never show.
-    let hint = if ui.settings.show_lost_hint && session.lost() { session.upcoming(6) } else { None };
+    let hint = if ui.settings.lost_hint_popup && session.lost() { session.upcoming(6) } else { None };
     let hint_text = hint
         .clone()
         .map(|r| {
@@ -2226,7 +2226,7 @@ fn SettingSwitch(mut state: Signal<Ui>, label: String, field: String, on: bool) 
                     "mirror_y" => u.settings.mirror_y = !u.settings.mirror_y,
                     "hold_at_end" => u.settings.hold_at_end = !u.settings.hold_at_end,
                     "sync_flash" => u.settings.sync_flash = !u.settings.sync_flash,
-                    "show_lost_hint" => u.settings.show_lost_hint = !u.settings.show_lost_hint,
+                    "lost_hint_popup" => u.settings.lost_hint_popup = !u.settings.lost_hint_popup,
                     "voice_resync" => u.settings.voice_resync = !u.settings.voice_resync,
                     "volume_keys" => u.settings.volume_keys = !u.settings.volume_keys,
                     "script_grammar" => u.settings.script_grammar = !u.settings.script_grammar,
@@ -2529,9 +2529,9 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         step: 5.0,
                     }
                     div { class: "setting-group switches",
-                        SettingSwitch { state, label: "Lost-place hint", field: "show_lost_hint", on: ui.settings.show_lost_hint }
+                        SettingSwitch { state, label: "Lost-place popup", field: "lost_hint_popup", on: ui.settings.lost_hint_popup }
                     }
-                    if ui.settings.show_lost_hint {
+                    if ui.settings.lost_hint_popup {
                         SettingSlider {
                             state,
                             label: "Hint after (s)",

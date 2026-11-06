@@ -128,6 +128,10 @@ fn unk_only_partial_is_idle() {
         "Welcome to our bright green studio",
         "Next slide",
     ]));
+    s.configure(&Settings {
+        lost_hint_popup: true,
+        ..Settings::default()
+    });
     s.start();
     assert_eq!(s.phase, Phase::Reading);
     s.speech("welcome to our", true);

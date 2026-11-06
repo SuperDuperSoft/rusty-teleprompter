@@ -27,6 +27,14 @@ fn script() -> Script {
     }
 }
 
+/// The lost-place popup is off by default; these tests exercise it.
+fn popup_on() -> Settings {
+    Settings {
+        lost_hint_popup: true,
+        ..Settings::default()
+    }
+}
+
 fn session(settings: &Settings) -> Session {
     let mut s = Session::new(script());
     s.configure(settings);
@@ -34,7 +42,7 @@ fn session(settings: &Settings) -> Session {
 }
 
 fn reading() -> Session {
-    let mut s = session(&Settings::default());
+    let mut s = session(&popup_on());
     s.start();
     assert_eq!(s.phase, Phase::Reading);
     s
@@ -57,7 +65,7 @@ fn lost_session() -> Session {
 
 #[test]
 fn not_hearing_before_any_speech() {
-    let mut s = session(&Settings::default());
+    let mut s = session(&popup_on());
     assert!(!s.hearing());
     s.start();
     assert!(!s.hearing());
@@ -114,7 +122,7 @@ fn hearing_in_countdown_but_not_paused_or_rolling() {
 
     let mut s = session(&Settings {
         pre_roll_secs: 3.0,
-        ..Settings::default()
+        ..popup_on()
     });
     s.start();
     assert_eq!(s.phase, Phase::Rolling);
@@ -207,7 +215,7 @@ trees. Evening lanterns glow softly along the village road.";
             text: text.into(),
         }],
     });
-    s.configure(&Settings::default());
+    s.configure(&popup_on());
     s.start();
     for t in [
         "the river flows quietly past the old stone mill",
@@ -255,8 +263,8 @@ fn dismiss_and_rewind_clear_lost() {
 #[test]
 fn lost_disabled_when_hint_off() {
     let mut s = session(&Settings {
-        show_lost_hint: false,
-        ..Settings::default()
+        lost_hint_popup: false,
+        ..popup_on()
     });
     s.start();
     ramble(&mut s, 10_000);
@@ -302,7 +310,7 @@ fn upcoming_extends_to_unit_end() {
 
 #[test]
 fn tick_changes_view_cases() {
-    let mut s = session(&Settings::default());
+    let mut s = session(&popup_on());
     assert!(!s.tick_changes_view(50));
     s.pause();
     assert_eq!(s.phase, Phase::Paused);
@@ -329,7 +337,7 @@ fn tick_changes_view_cases() {
     // Holding behaves like Reading.
     let mut s = session(&Settings {
         hold_at_end: true,
-        ..Settings::default()
+        ..popup_on()
     });
     s.start();
     s.speech("welcome to our bright green studio", true);
@@ -350,7 +358,7 @@ fn tick_changes_view_cases() {
 
     let mut s = session(&Settings {
         pre_roll_secs: 3.0,
-        ..Settings::default()
+        ..popup_on()
     });
     s.start();
     assert_eq!(s.phase, Phase::Rolling);

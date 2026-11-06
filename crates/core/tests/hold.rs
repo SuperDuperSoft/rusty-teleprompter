@@ -136,7 +136,8 @@ fn new_settings_defaults_and_old_json() {
         (st.pre_roll_secs, st.speaking_wpm, st.lost_place_secs),
         (0.0, 150.0, 5.0)
     );
-    assert!(st.sync_flash && st.show_lost_hint && st.voice_resync);
+    assert!(st.sync_flash && st.voice_resync);
+    assert!(!st.lost_hint_popup, "lost-place popup is off by default");
     assert!(!st.volume_keys && !st.script_grammar);
     assert_eq!(
         st,
@@ -182,20 +183,21 @@ fn configure_copies_new_settings() {
     );
     assert_eq!(
         (s.elapsed_ms, s.heard_ago_ms, s.stuck_ms, s.lost_after_ms),
-        (0, None, 0, 5000)
+        (0, None, 0, 0)
     );
     assert!(s.voice_resync);
     s.configure(&Settings {
         pre_roll_secs: 3.4567,
         speaking_wpm: 170.0,
         lost_place_secs: 7.25,
+        lost_hint_popup: true,
         voice_resync: false,
         ..Settings::default()
     });
     assert_eq!((s.pre_roll_ms, s.wpm, s.lost_after_ms), (3457, 170.0, 7250));
     assert!(!s.voice_resync);
     s.configure(&Settings {
-        show_lost_hint: false,
+        lost_hint_popup: false,
         ..Settings::default()
     });
     assert_eq!((s.pre_roll_ms, s.wpm, s.lost_after_ms), (0, 150.0, 0));
@@ -283,4 +285,10 @@ fn revision_while_paused_holding_removing_later_slides_reads() {
     assert!(s.apply_revision(u));
     s.start();
     assert_eq!(s.phase, Phase::Reading);
+}
+
+#[test]
+fn old_saved_lost_hint_setting_resets_to_off() {
+    let st: Settings = serde_json::from_str(r#"{"show_lost_hint":true}"#).unwrap();
+    assert!(!st.lost_hint_popup);
 }
