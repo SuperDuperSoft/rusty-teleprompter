@@ -74,8 +74,6 @@ fn speech_ignored_while_rolling() {
     assert_eq!(s.take, take);
     let tag = s.voice_tag();
     s.speech_for_take("welcome to our bright", false, Some(tag));
-    assert_eq!(s.tracker.position, None);
-    s.speech_for_take("welcome to our bright", false, Some(tag));
     assert_eq!(s.tracker.position, Some(3));
 }
 #[test]

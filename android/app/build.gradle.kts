@@ -6,7 +6,7 @@ android {
         applicationId = "com.rustyprompter.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 3
+        versionCode = 4
         versionName = "1.1.0"
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64") }
     }

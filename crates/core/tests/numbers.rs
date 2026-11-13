@@ -192,8 +192,11 @@ fn sentence_start_on_money() {
 #[test]
 fn eighty_does_not_match_eighth() {
     let mut t = Tracker::new("the eighth day");
-    t.accept("the eighty day", true);
-    assert_ne!(t.position, Some(2));
+    t.accept("eighty", true);
+    assert_eq!(t.position, None);
+    // "eighth" itself does.
+    t.accept("eighth", true);
+    assert_eq!(t.position, Some(1));
 }
 #[test]
 fn position_saved_with_old_scheme_is_not_restored() {

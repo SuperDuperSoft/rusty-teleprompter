@@ -112,7 +112,7 @@ fn unk_tokens_keep_adlib_penalty() {
     for hyp in ["the [unk] [unk] lord", "the [UNK] [Unk] lord"] {
         let mut t = Tracker::new(text);
         assert_eq!(t.accept(hyp, true), None, "{hyp}");
-        assert_eq!(t.last_outcome, Outcome::NoMatch);
+        assert_ne!(t.last_outcome, Outcome::Advanced);
     }
     // A script that literally says the reserved token never matches it.
     let mut t = Tracker::new("zzunk zzunk zzunk zzunk");

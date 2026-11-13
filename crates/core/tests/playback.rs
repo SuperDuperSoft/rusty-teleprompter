@@ -112,10 +112,12 @@ fn numbers_are_spoken_words() {
     );
 }
 #[test]
-fn stable_partial_required() {
+fn last_word_needs_a_partial_that_holds() {
+    // Words move the position at once, but the slide's last word ends the
+    // slide, so a partial has to hold still (or a final arrive) first.
     let mut t = Tracker::new("welcome to our studio");
     t.accept("welcome to our studio", false);
-    assert_eq!(t.position, None);
+    assert_eq!(t.position, Some(2));
     t.accept("welcome to our studio", false);
     assert_eq!(t.position, Some(3));
 }

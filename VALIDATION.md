@@ -1,5 +1,34 @@
 # RustyPrompter validation
 
+## Voice following, rebuilt — November 12, 2026
+
+Two problems were reported: on long slides the highlight could leap far ahead, and it always trailed the voice by several words.
+
+### What was wrong
+
+- **The leap** was reproduced exactly with a simulated reader on a 600-word slide that says "The grace of God is not something we earn" twice, 480 words apart. The recognizer repeats its unchanged partial several times a second; the old tracker counted the repeat as a second sighting and matched the same already-used words to the far copy. One step of 485 words, on every run, even with a perfect microphone.
+- **The lag** was built in: the screen showed the last word the microphone had confirmed, and a word only counted once a later partial repeated it. In the simulation that position was 2 or more words behind the voice about 90% of the time.
+
+### What changed
+
+- **Tracker:** each partial is lined up against the script from where the utterance began, so every heard word is used once; an unchanged partial is not evidence; the next words commit at once, and only a real skip ahead has to prove itself with several distinctive words (and be seen again in a longer partial).
+- **Cursor:** the screen now shows the word being said. It runs ahead of the heard words at the reader's measured pace, allows for the reader's usual pause between sentences (learned as they read), holds still when they go quiet, and is never more than 3 words past what was heard.
+- **Screen:** the highlighted word is the cursor; the next two words are lifted; scrolling follows the cursor.
+
+### Automated checks
+
+- **312 Rust tests** pass (core and companion), clippy clean. The existing guards still pass unchanged: far-jump tests, end-of-slide tests, back-resync tests, and the 64-event offline Vosk replay. 9 tests that pinned the old "wait for a repeat" behaviour were rewritten for the new rules.
+- **New simulator tests** (`crates/core/tests/following.rs`, seeded, 4 readings of the 600-word slide each): typical microphone (10% wrong words, 3% dropped, 0.3–0.6 s late): cursor on the word being said or up to 2 ahead 78% of the time, within one word 95%, 2+ words behind 5% (the old screen position: 89%), 4+ ahead 0.2%, biggest single step 8 words (old: 485). Also held to limits: fast (190 wpm) and slow (110 wpm) readers, a 40-word skip, re-reading a sentence, a 12-word ad-lib, clean and bad microphones.
+- **Fuzz tests**: random speech, seeks, retakes and slide changes never panic, never leave the range, and the cursor stays within 3 words of the heard words.
+
+### Required on hardware — NOT yet claimed
+
+The simulator's microphone is modelled on the recorded Vosk replay, but nothing below has been run on a device:
+
+- Galaxy S26 and Tab A7 Lite, and reading on the PC: the highlight sits on the word being said; if it trails or leads, the **Highlight runs ahead** setting corrects it (each device's recognizer is late by a different amount).
+- A long real script with repeated phrases: no leap.
+- Skipping a paragraph and re-reading a sentence are still followed.
+
 ## Camera recording — November 5, 2026
 
 ### Automated checks

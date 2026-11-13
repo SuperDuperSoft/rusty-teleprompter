@@ -19,8 +19,19 @@ fn outcome_advanced_pending_nomatch() {
     let mut t = Tracker::new("welcome to our bright green studio");
     t.accept("welcome to our", true);
     assert_eq!(t.last_outcome, Outcome::Advanced);
+    // The next words move the position at once, even from a partial.
     t.accept("bright green", false);
-    assert_eq!(t.last_outcome, Outcome::Pending);
+    assert_eq!(t.last_outcome, Outcome::Advanced);
+    assert_eq!(t.position, Some(4));
+    // An unchanged partial is not new evidence.
+    t.accept("bright green", false);
+    assert_eq!(t.last_outcome, Outcome::Idle);
+    // A lone common word after a gap waits for more.
+    let mut gap = Tracker::new("welcome to our bright green studio and the camera is ready");
+    gap.accept("welcome to our", true);
+    gap.accept("and", false);
+    assert_eq!(gap.last_outcome, Outcome::Pending);
+    assert_eq!(gap.position, Some(2));
     t.accept("purple elephants dancing", true);
     assert_eq!(t.last_outcome, Outcome::NoMatch);
 }

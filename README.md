@@ -18,7 +18,8 @@ Write your script on your PC, read it on an Android tablet, and the text follows
 ## What it does
 
 **Follows your voice**
-- Highlights where you are as you read. Skip a word, say "um", or ad-lib a little, and it keeps up.
+- Highlights the word you are saying, not the one you just said. A microphone always hears late, so the highlight runs ahead of it at your own pace, and the next two words are lifted so your eye can run ahead.
+- Skip a word, say "um", or ad-lib a little, and it keeps up. Long slides that repeat a sentence don't make it leap.
 - If you go back and re-read a sentence, the highlight goes back with you.
 - Reads numbers the way you say them: "John 3:16" → "John three sixteen", "$5" → "five dollars", "21st" → "twenty first".
 - A slide only finishes when you actually say its last words.

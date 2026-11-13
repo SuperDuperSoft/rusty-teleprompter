@@ -196,3 +196,6 @@ html:has(.camera-on),body:has(.camera-on){background:transparent!important;color
 @media (prefers-reduced-motion:reduce){.prompt-controls .rec.recording .rec-dot{animation:none}}
 /* Landscape phones hide labels; keep the recording timer visible. */
 @media (max-height:520px){.prompt-controls .rec.recording .control-label{display:block;color:#ffb4b4}}
+/* Voice following: the highlighted word is the one being said now; the next two are lifted so the eye can run ahead. */
+.prompter .spoken-word{transition:color .18s,background-color .18s,box-shadow .18s}
+.prompter .spoken-word.soon-word{color:#fff;background:#e2925f17;box-shadow:0 0 0 3px #e2925f17}

@@ -8,6 +8,7 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::*,
 };
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
+const APP_ICON_ID: usize = 101;
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -31,6 +32,7 @@ pub fn run(state: Arc<AppState>) {
             hInstance: instance,
             lpszClassName: class.as_ptr(),
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            hIcon: LoadIconW(instance, APP_ICON_ID as *const u16),
             hbrBackground: (COLOR_WINDOW + 1) as _,
             ..std::mem::zeroed()
         };

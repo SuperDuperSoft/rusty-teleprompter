@@ -592,7 +592,7 @@ impl Ui {
         native_call("settings", &text);
         if let Some(session) = &mut self.session {
             configure_session(session, &self.settings);
-            follow_word(session.tracker.position.unwrap_or(0), self.settings.guide, true);
+            follow_word(session.cursor().unwrap_or(0), self.settings.guide, true);
         }
     }
     fn export(&self, plain: bool) {
@@ -1027,7 +1027,9 @@ async fn pump(mut state: Signal<Ui>) {
         was_following = follow;
         set_following(follow);
         if let Some(session) = &state.peek().session {
-            let position = session.tracker.position.unwrap_or(0);
+            // The cursor is the word being said now; it runs ahead of the
+            // microphone, so the text scrolls with the voice, not behind it.
+            let position = session.cursor().unwrap_or(0);
             if follow && shown_word != Some(position) {
                 follow_word(position, state.peek().settings.guide, shown_word.is_none());
                 shown_word = Some(position);
@@ -1955,10 +1957,13 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
             text: String::new(),
         });
     let running = session.phase.running();
+    // `current` is the last word the microphone reported; `cursor` is the
+    // word being said now, which is what the reader needs to see.
     let current = session.tracker.position;
+    let cursor = session.cursor();
     let parts = session.tracker.words.clone();
     // A zero-width number part is invisible; highlight its unit's last part.
-    let active = current.map(|c| unit_end(&parts, c));
+    let active = cursor.map(|c| unit_end(&parts, c));
     let roll = if session.phase == Phase::Rolling {
         Some(session.roll_ms.div_ceil(1000))
     } else {
@@ -2143,9 +2148,11 @@ fn Prompter(mut state: Signal<Ui>) -> Element {
                                     let previous = if i == 0 { 0 } else { parts[i - 1].end };
                                     let before = raw[previous..word.start].to_string();
                                     let spoken = raw[word.start..word.end].to_string();
-                                    let class = match current {
-                                        _ if active == Some(i) => "spoken-word active-word",
-                                        Some(c) if i < c => "spoken-word read-word",
+                                    let class = match active {
+                                        Some(a) if i == a => "spoken-word active-word",
+                                        Some(a) if i < a => "spoken-word read-word",
+                                        // The next couple of words, so the eye can run ahead.
+                                        Some(a) if i <= a + 2 => "spoken-word soon-word",
                                         _ => "spoken-word",
                                     };
                                     let class = if hint.as_ref().is_some_and(|r| r.contains(&i)) {
@@ -2366,6 +2373,7 @@ fn SettingSlider(
                             "countdown_secs" => ui.settings.countdown_secs = v,
                             "pre_roll_secs" => ui.settings.pre_roll_secs = v,
                             "speaking_wpm" => ui.settings.speaking_wpm = v,
+                            "highlight_lead" => ui.settings.highlight_lead = v,
                             "lost_place_secs" => ui.settings.lost_place_secs = v,
                             _ => {}
                         }
@@ -2684,6 +2692,15 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         div { class: "setting-group switches",
                             SettingSwitch { state, label: "Sync flash", field: "sync_flash", on: ui.settings.sync_flash }
                         }
+                    }
+                    SettingSlider {
+                        state,
+                        label: "Highlight runs ahead (s)",
+                        field: "highlight_lead",
+                        value: ui.settings.highlight_lead,
+                        min: 0.0,
+                        max: 1.5,
+                        step: 0.1,
                     }
                     SettingSlider {
                         state,
