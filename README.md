@@ -33,7 +33,7 @@ Write your script on your PC, read it on an Android tablet, and the text follows
 
 **Helps you stay on track**
 - A small dot lights up when the app hears you.
-- Optional: if you lose your place, a popup shows the next words (off by default; turn on "Lost-place popup" in Aa settings).
+- Optional: if you lose your place, a popup shows the next words (off by default; turn on "Show next words if I lose my place" in Aa settings).
 - Shows how long each slide and the whole script will take, plus time left while you read.
 
 **Fits your setup**

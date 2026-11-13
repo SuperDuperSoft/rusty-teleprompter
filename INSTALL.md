@@ -44,7 +44,7 @@ If the PC shows multiple addresses, choose its Wi-Fi/LAN address. Guest Wi-Fi is
 
 ### Pre-roll
 
-With **Pre-roll** above 0 in the Aa settings sheet, Start, or resuming a paused reading (and Retake or Sentence during a take, and starting again after Finished), shows a 3-2-1 countdown before listening begins. Resuming a paused end-of-slide countdown or hold does not pre-roll. It ends in a short white **sync flash** (switch off with **Sync flash**) that a separate camera can use to line up audio. **Start now** skips the rest of the countdown; **Cancel** pauses. Pausing during a pre-roll and resuming plays the full pre-roll again. Automatic slide changes never pre-roll, but changing slides during a pre-roll (Next, Back or tapping a slide) restarts it on the new slide, and Next from a paused hold at end of slide reads the next slide with a pre-roll.
+With **Countdown before a take** above 0 in the Aa settings sheet, Start, or resuming a paused reading (and Retake or Sentence during a take, and starting again after Finished), shows a 3-2-1 countdown before listening begins. Resuming a paused end-of-slide countdown or hold does not pre-roll. It ends in a short white **sync flash** (switch off with **White flash when the take starts**) that a separate camera can use to line up audio. **Start now** skips the rest of the countdown; **Cancel** pauses. Pausing during a pre-roll and resuming plays the full pre-roll again. Automatic slide changes never pre-roll, but changing slides during a pre-roll (Next, Back or tapping a slide) restarts it on the new slide, and Next from a paused hold at end of slide reads the next slide with a pre-roll.
 
 The microphone opens when the pre-roll starts, so the very first time you use voice following, Android's microphone permission prompt appears during the countdown. The prompt pauses the take; once you allow it, the countdown starts over by itself. Speech during the countdown is ignored.
 
@@ -59,7 +59,7 @@ Pair a Bluetooth clicker or pedal that acts as a keyboard with the tablet (or us
 | Space, Enter, Play/Pause | Start or pause | — |
 | Play | Start or resume | — |
 | Pause, B, period (a clicker's blank-screen button) | Pause | — |
-| Volume up / down (only with **Volume keys as remote** on, tablet only) | Like Page Down / Page Up | Like Page Down / Page Up |
+| Volume up / down (only with **Volume keys act as Next and Back** on, tablet only) | Like Page Down / Page Up | Like Page Down / Page Up |
 
 A quick repeat of the same action (within 0.4 s of the last one) is ignored, so a bouncy clicker cannot skip slides, and a second Next right after Start does not cancel the pre-roll. After Finished, Next starts the script again from the first slide. Media keys are reliable on the tablet only; desktop browsers usually keep them for the operating system. A large toast confirms each remote action.
 
@@ -75,7 +75,7 @@ On the reading screen, tap **🎥**. Your camera shows behind the script, with a
 
 ### Reading settings
 
-The Aa settings sheet also has: **Highlight runs ahead (s)** (0–1.5, default 0.6: how far the highlight runs ahead of the microphone, which always hears late; raise it if the highlight trails your voice, lower it if it gets ahead of you), **Pre-roll (s)** (0 = off, up to 10), **Sync flash**, **Speaking pace (wpm)** for estimates (80–240, default 150), **Lost-place popup** (off by default) and **Hint after (s)** (2–15, default 5), **Follow re-reading** (on by default; moves the highlight back when you re-read earlier text), and on the tablet **Volume keys as remote** (off by default) and **Script vocabulary (beta)** (off by default). Script vocabulary limits recognition to the script's words; it restarts the microphone when switched or when the script changes, and falls back to the full vocabulary with a message for very large scripts or if the model cannot build it. Older saved settings load with these defaults.
+The Aa settings sheet also has: **Highlight runs ahead (s)** (0–1.5, default 0.6: how far the highlight runs ahead of the microphone, which always hears late; raise it if the highlight trails your voice, lower it if it gets ahead of you), **Countdown before a take (s)** (0 = off, up to 10), **White flash when the take starts**, **Speaking pace (wpm)** for estimates (80–240, default 150), **Show next words if I lose my place** (off by default) and **Show them after (s)** (2–15, default 5), **Follow me when I re-read** (on by default; moves the highlight back when you re-read earlier text), and on the tablet **Volume keys act as Next and Back** (off by default) and **Listen only for this script’s words (beta)** (off by default). It limits recognition to the script's words; it restarts the microphone when switched or when the script changes, and falls back to the full vocabulary with a message for very large scripts or if the model cannot build it. Older saved settings load with these defaults.
 
 ### After upgrading from the previous release
 

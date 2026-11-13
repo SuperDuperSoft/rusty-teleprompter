@@ -544,6 +544,8 @@ impl Ui {
                 }
                 "skip_roll" => s.skip_roll(),
                 "dismiss_lost" => s.dismiss_lost(),
+                // Nothing is running before Start, so there is nothing to pause.
+                "pause" if s.phase == Phase::Ready => {}
                 "pause" => s.pause(),
                 "next" => s.next(),
                 "previous" => s.previous(),
@@ -1333,7 +1335,7 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                     div { class: "connection-copy",
                         span { class: "eyebrow", "FROM YOUR DESK TO YOUR TABLET" }
                         strong { "{ui.tablet_status}" }
-                        small { "Both devices on the same Wi-Fi. Changes sync automatically." }
+                        small { "Both devices on the same Wi-Fi. Changes sync both ways, automatically." }
                     }
                     div { class: "connection-details",
                         span { class: "address", "{addresses}" }
@@ -1352,9 +1354,9 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                             "with your words."
                         }
                         p {
-                            "Write your script one slide at a time. Your tablet listens,"
+                            "Write your script one slide at a time. Read it here or on your tablet:"
                             br {}
-                            "follows your voice, and gives you a breath between slides."
+                            "the text follows your voice and gives you a breath between slides."
                         }
                         div { class: "welcome-actions",
                             button {
@@ -1371,7 +1373,7 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                         }
                         div { class: "welcome-steps",
                             span { "01  Write on your PC" }
-                            span { "02  Read on your tablet" }
+                            span { "02  Read here or on your tablet" }
                             span { "03  Find your flow" }
                         }
                     }
@@ -1832,6 +1834,11 @@ fn TabletEditor(mut state: Signal<Ui>) -> Element {
             div { class: "list-heading",
                 h1 { "Slides" }
                 span { class: "list-count", "{total}" }
+                button {
+                    class: "ghost-button small",
+                    onclick: move |_| state.write().add_slide(),
+                    "+ Slide"
+                }
             }
             div { class: "slide-chips", aria_label: "Slides",
                 {
@@ -1857,11 +1864,6 @@ fn TabletEditor(mut state: Signal<Ui>) -> Element {
                                 }
                             }
                         })
-                }
-                button {
-                    class: "slide-chip add",
-                    onclick: move |_| state.write().add_slide(),
-                    "+ Slide"
                 }
             }
             if let Some(slide) = slide {
@@ -1926,14 +1928,14 @@ fn TabletEditor(mut state: Signal<Ui>) -> Element {
                         button {
                             class: "ghost-button danger",
                             onclick: move |_| state.write().confirm = Some("slide".into()),
-                            "Delete slide"
+                            "Delete"
                         }
                     }
                 }
             } else {
                 div { class: "empty-state",
                     strong { "No slides yet" }
-                    p { "Tap + Slide to start writing." }
+                    p { "Tap + Slide above to start writing." }
                 }
             }
             button {
@@ -2473,11 +2475,11 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         "Numbers can be spoken naturally: say “John three sixteen” for John 3:16, “five dollars” for $5 and “twenty first” for 21st."
                     }
                     p {
-                        "Pre-roll: set a pre-roll in Reading settings for a 3-2-1 countdown before each take, ending in a white flash you can use to sync a separate camera. Tap Start now to skip it. The microphone opens when the countdown starts, so the first time you use voice following the permission prompt appears during the countdown; once you allow it, the countdown starts again."
+                        "Countdown before a take: set it in Reading settings for a 3-2-1 countdown before each take, ending in a white flash you can use to sync a separate camera. Tap Start now to skip it. The microphone opens when the countdown starts, so the first time you use voice following the permission prompt appears during the countdown; once you allow it, the countdown starts again."
                     }
                     p {
                         strong { "Remote & keys. " }
-                        "A Bluetooth clicker, pedal or keyboard can drive the prompter. Page Down, Right or Down arrow: start or next slide; hold it to pause or resume. Page Up, Left or Up arrow: back one sentence; hold it to retake the slide. Space or Enter: start or pause. B or the period key (a clicker’s blank-screen button): pause. On the tablet, media keys work too (play/pause, play, pause, next and previous track), and the volume keys can act as Next and Back if you turn on Volume keys as remote. Keys do nothing while a settings sheet or this help is open."
+                        "A Bluetooth clicker, pedal or keyboard can drive the prompter. Page Down, Right or Down arrow: start or next slide; hold it to pause or resume. Page Up, Left or Up arrow: back one sentence; hold it to retake the slide. Space or Enter: start or pause. B or the period key (a clicker’s blank-screen button): pause. On the tablet, media keys work too (play/pause, play, pause, next and previous track), and the volume keys can act as Next and Back if you turn on “Volume keys act as Next and Back”. Keys do nothing while a settings sheet or this help is open."
                     }
                     p {
                         "Backup keeps your slides in an editable JSON file. Export text gives you a plain-text copy. Import accepts both. The Windows database lives in %LOCALAPPDATA%\\RustyPrompter."
@@ -2598,6 +2600,7 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                             "×"
                         }
                     }
+                    h3 { class: "setting-section", "Text" }
                     SettingSlider {
                         state,
                         label: "Text size",
@@ -2634,6 +2637,7 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         max: 60.0,
                         step: 1.0,
                     }
+                    h3 { class: "setting-section", "Screen" }
                     if ui.native {
                     div { class: "setting-group",
                         span { class: "setting-name", "Screen rotation" }
@@ -2666,12 +2670,15 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         SettingSwitch { state, label: "Show reading line", field: "guide", on: ui.settings.show_guide }
                         SettingSwitch { state, label: "Mirror left–right", field: "mirror_x", on: ui.settings.mirror_x }
                         SettingSwitch { state, label: "Flip upside down", field: "mirror_y", on: ui.settings.mirror_y }
+                    }
+                    h3 { class: "setting-section", "Starting and ending a slide" }
+                    div { class: "setting-group switches",
                         SettingSwitch { state, label: "Hold at end of slide", field: "hold_at_end", on: ui.settings.hold_at_end }
                     }
                     if !ui.settings.hold_at_end {
                         SettingSlider {
                             state,
-                            label: "Countdown",
+                            label: "Countdown to next slide (s)",
                             field: "countdown_secs",
                             value: ui.settings.countdown_secs,
                             min: 1.0,
@@ -2681,7 +2688,7 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                     }
                     SettingSlider {
                         state,
-                        label: "Pre-roll (s)",
+                        label: "Countdown before a take (s)",
                         field: "pre_roll_secs",
                         value: ui.settings.pre_roll_secs,
                         min: 0.0,
@@ -2690,9 +2697,10 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                     }
                     if ui.settings.pre_roll_secs > 0.0 {
                         div { class: "setting-group switches",
-                            SettingSwitch { state, label: "Sync flash", field: "sync_flash", on: ui.settings.sync_flash }
+                            SettingSwitch { state, label: "White flash when the take starts", field: "sync_flash", on: ui.settings.sync_flash }
                         }
                     }
+                    h3 { class: "setting-section", "Voice following" }
                     SettingSlider {
                         state,
                         label: "Highlight runs ahead (s)",
@@ -2712,12 +2720,12 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         step: 5.0,
                     }
                     div { class: "setting-group switches",
-                        SettingSwitch { state, label: "Lost-place popup", field: "lost_hint_popup", on: ui.settings.lost_hint_popup }
+                        SettingSwitch { state, label: "Show next words if I lose my place", field: "lost_hint_popup", on: ui.settings.lost_hint_popup }
                     }
                     if ui.settings.lost_hint_popup {
                         SettingSlider {
                             state,
-                            label: "Hint after (s)",
+                            label: "Show them after (s)",
                             field: "lost_place_secs",
                             value: ui.settings.lost_place_secs,
                             min: 2.0,
@@ -2726,11 +2734,11 @@ fn Overlays(mut state: Signal<Ui>) -> Element {
                         }
                     }
                     div { class: "setting-group switches",
-                        SettingSwitch { state, label: "Follow re-reading", field: "voice_resync", on: ui.settings.voice_resync }
+                        SettingSwitch { state, label: "Follow me when I re-read", field: "voice_resync", on: ui.settings.voice_resync }
                         if ui.native {
-                            SettingSwitch { state, label: "Volume keys as remote", field: "volume_keys", on: ui.settings.volume_keys }
+                            SettingSwitch { state, label: "Volume keys act as Next and Back", field: "volume_keys", on: ui.settings.volume_keys }
                         }
-                        SettingSwitch { state, label: "Script vocabulary (beta)", field: "script_grammar", on: ui.settings.script_grammar }
+                        SettingSwitch { state, label: "Listen only for this script’s words (beta)", field: "script_grammar", on: ui.settings.script_grammar }
                     }
                     if ui.session.is_some() {
                         button {

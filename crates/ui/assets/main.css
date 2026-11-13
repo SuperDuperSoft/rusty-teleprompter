@@ -199,3 +199,10 @@ html:has(.camera-on),body:has(.camera-on){background:transparent!important;color
 /* Voice following: the highlighted word is the one being said now; the next two are lifted so the eye can run ahead. */
 .prompter .spoken-word{transition:color .18s,background-color .18s,box-shadow .18s}
 .prompter .spoken-word.soon-word{color:#fff;background:#e2925f17;box-shadow:0 0 0 3px #e2925f17}
+.setting-section{font-size:12px;font-weight:650;letter-spacing:1.4px;text-transform:uppercase;color:var(--accent);margin:26px 0 -4px;padding-top:16px;border-top:1px solid var(--line)}
+.sheet-bar+.setting-section{border-top:0;margin-top:6px;padding-top:0}
+.setting-section+.setting-group{margin-top:14px}
+.list-heading{align-items:center}
+.edit-actions{flex-wrap:nowrap}
+.edit-actions .ghost-button{flex:1 1 0;min-width:0;padding-left:8px;padding-right:8px}
+.settings-sheet>.ghost-button.wide{margin:18px 0 10px}
