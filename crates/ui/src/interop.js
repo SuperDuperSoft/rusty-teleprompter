@@ -67,6 +67,10 @@ export function now() { return performance.now(); }
 export function local_get(key) { try { return localStorage.getItem(key) || ""; } catch { return ""; } }
 export function local_set(key, value) { try { if (value) localStorage.setItem(key,value); else localStorage.removeItem(key); } catch {} }
 export function set_dirty(value) { window.__rustyDirty = value; }
+export function viewport_width() { return window.innerWidth || 0; }
+export function reveal_active_chip() {
+  requestAnimationFrame(() => document.querySelector(".slide-chip.active")?.scrollIntoView({block: "nearest", inline: "nearest"}));
+}
 export function set_following(value) { window.__rustyFollowing = value; }
 export function uuid() { return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(16) + "-" + Math.random().toString(16).slice(2); }
 export function request_import() { document.getElementById("import-file")?.click(); }

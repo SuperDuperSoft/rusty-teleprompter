@@ -19,6 +19,8 @@ extern "C" {
     fn download_file(name: &str, text: &str);
     fn follow_word(index: usize, guide: f64, force: bool);
     fn set_remote(prompting: bool, keys_json: &str);
+    fn viewport_width() -> f64;
+    fn reveal_active_chip();
     fn desktop_voice();
     fn keep_awake(on: bool);
     fn toggle_fullscreen();
@@ -104,6 +106,15 @@ impl Ui {
             .ok()
             .or_else(|| serde_json::from_str(&local_get("rusty:settings")).ok())
             .unwrap_or_default();
+        // Nothing saved yet and a phone-width screen: the tablet-sized default
+        // text would fit about four words on a line.
+        let first_run = boot["settings"].as_object().is_none_or(|o| o.is_empty())
+            && local_get("rusty:settings").is_empty();
+        let settings = if first_run && native && viewport_width() < 600.0 {
+            Settings { font_size: 30.0, ..settings }
+        } else {
+            settings
+        };
         let library = serde_json::from_value(boot["library"].clone())
             .unwrap_or_else(|_| Library {
                 generation: 0,
@@ -285,14 +296,24 @@ impl Ui {
         self.last_edit = now();
         self.save_status = "Saving…".into();
         set_dirty(true);
-        if let Some(s) = self.script().filter(|_| !self.native) {
+        if self.native {
+            // Marked at once, not when the save runs: a PC library arriving
+            // in between must not replace what was just typed.
+            if !self.unsynced.contains(&self.selected) {
+                self.unsynced.push(self.selected.clone());
+            }
+        } else if let Some(s) = self.script() {
             local_set("rusty:draft", &serde_json::to_string(s).unwrap());
         }
     }
     fn can_switch(&mut self) -> bool {
         if self.dirty {
-            self.message = "Your changes are still saving. Give them a moment, or export a backup."
-                .into();
+            self.message = if self.native {
+                "Still saving your last change. Try again in a moment."
+            } else {
+                "Your changes are still saving. Give them a moment, or export a backup."
+            }
+            .into();
             false
         } else {
             true
@@ -702,6 +723,10 @@ fn end_of_slide_text(settings: &Settings) -> String {
         format!("starts a {:.0}-second countdown", settings.countdown_secs)
     }
 }
+/// "1 slide", "2 slides".
+fn count_of(n: usize, noun: &str) -> String {
+    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+}
 /// Keep only characters that can appear in an IPv4 address with optional port.
 /// A pasted "http://192.168.1.5:8766/" becomes "192.168.1.5" (default port dropped).
 fn ip_only(raw: &str) -> String {
@@ -1067,10 +1092,6 @@ async fn pump(mut state: Signal<Ui>) {
             };
             if save {
                 let mut ui = state.write();
-                let id = ui.selected.clone();
-                if !ui.unsynced.contains(&id) {
-                    ui.unsynced.push(id);
-                }
                 ui.dirty = false;
                 set_dirty(false);
                 ui.save_unsynced();
@@ -1244,7 +1265,8 @@ fn Studio(mut state: Signal<Ui>) -> Element {
     let duration = format_duration(slide_estimate_ms(&slide, ui.settings.speaking_wpm));
     let script_total = format_duration(script_estimate_ms(&script, &ui.settings));
     let end_text = end_of_slide_text(&ui.settings);
-    let addresses = ui.addresses.iter().map(|a| ip_only(a)).collect::<Vec<_>>().join(" or ");
+    // Home and office Wi-Fi addresses sort first; two are plenty.
+    let addresses = ui.addresses.iter().take(2).map(|a| ip_only(a)).collect::<Vec<_>>().join(" or ");
     rsx! {
         div { class: "studio-shell",
             aside { class: "sidebar",
@@ -1278,7 +1300,7 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                                         span { class: "script-symbol", "▤" }
                                         div {
                                             strong { "{item.title}" }
-                                            small { "{item.slides.len()} slides" }
+                                            small { "{count_of(item.slides.len(), \"slide\")}" }
                                         }
                                     }
                                 }
@@ -1469,7 +1491,7 @@ fn Studio(mut state: Signal<Ui>) -> Element {
                                                 span { class: "slide-number", "{i+1:02}" }
                                                 div {
                                                     strong { "{title}" }
-                                                    small { "{word_count} words" }
+                                                    small { "{count_of(word_count, \"word\")}" }
                                                 }
                                             }
                                         }
@@ -1684,8 +1706,10 @@ fn TabletApp(mut state: Signal<Ui>) -> Element {
                         class: "ghost-button small",
                         onclick: move |_| {
                             let mut u = state.write();
+                            let before = u.library.scripts.len();
                             u.new_script(false);
-                            u.editing = true;
+                            // Refused while the last edit is still saving.
+                            u.editing = u.library.scripts.len() > before;
                         },
                         "+ New"
                     }
@@ -1715,7 +1739,7 @@ fn TabletApp(mut state: Signal<Ui>) -> Element {
                                         onclick: move |_| state.write().open(id.clone()),
                                         div {
                                             strong { "{script.title}" }
-                                            small { "{slides} slides · {words_total} words · about {minutes} min{unsynced}" }
+                                            small { "{count_of(slides, \"slide\")} · {count_of(words_total, \"word\")} · about {minutes} min{unsynced}" }
                                         }
                                         span { class: "chevron", "›" }
                                     }
@@ -1774,6 +1798,8 @@ fn TabletEditor(mut state: Signal<Ui>) -> Element {
         "Saved on this tablet · syncs when the PC is online"
     };
     let read_id = script.id.clone();
+    // A slide just added, duplicated or moved may sit outside the strip.
+    reveal_active_chip();
     rsx! {
         main { class: "phone-home phone-edit",
             header { class: "phone-bar",
@@ -1903,7 +1929,7 @@ fn TabletEditor(mut state: Signal<Ui>) -> Element {
                         },
                     }
                     p { class: "edit-meta",
-                        "{count} words · ~{duration} · [Directions in brackets aren’t read aloud]"
+                        "{count_of(count, \"word\")} · ~{duration} · [Directions in brackets aren’t read aloud]"
                     }
                     div { class: "edit-actions",
                         button {

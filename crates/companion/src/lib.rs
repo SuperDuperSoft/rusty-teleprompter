@@ -696,11 +696,11 @@ async fn voice_session(mut socket: WebSocket, state: Arc<AppState>) {
                 if let Ok(tag) = payload.trim().parse() { take.store(tag, std::sync::atomic::Ordering::SeqCst); }
                 match value["command"].as_str().unwrap_or("") {
                     "start" => wanted = true,
-                    "stop" => { wanted = false; listener = None; }
+                    "stop" => { wanted = false; close_listener(listener.take()); }
                     "reset" => if let Some(l) = &listener { l.reset(); },
                     "grammar" => {
                         grammar = Some(payload.to_string()).filter(|g| !g.trim().is_empty());
-                        listener = None;
+                        close_listener(listener.take());
                     }
                     _ => {}
                 }
@@ -724,5 +724,11 @@ async fn voice_session(mut socket: WebSocket, state: Arc<AppState>) {
         }
     }
     // Closing the studio tab closes the microphone.
-    tokio::task::spawn_blocking(move || drop(listener));
+    close_listener(listener);
+}
+/// Closing the microphone joins its thread, so it runs off the async workers.
+fn close_listener(listener: Option<voice::Listener>) {
+    if listener.is_some() {
+        tokio::task::spawn_blocking(move || drop(listener));
+    }
 }
