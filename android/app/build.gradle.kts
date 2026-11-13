@@ -6,8 +6,8 @@ android {
         applicationId = "com.rustyprompter.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.1.0"
+        versionCode = 5
+        versionName = "1.2.0"
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64") }
     }
     signingConfigs { create("localRelease") { storeFile = file("../../.signing/rustyprompter.jks"); storePassword = System.getenv("RUSTYPROMPTER_STORE_PASSWORD") ?: ""; keyAlias = "rustyprompter"; keyPassword = storePassword } }
